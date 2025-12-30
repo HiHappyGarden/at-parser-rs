@@ -10,9 +10,33 @@ repository = "https://github.com/HiHappyGarden/parser-rs.git"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = ["osal_rs"]
+osal_rs = ["dep:osal-rs"]
+enable_panic = []
+
 [dependencies]
-osal-rs = { path = "../osal-rs/osal-rs", features = ["freertos"] }
-osal-rs-tests = { path = "../osal-rs/osal-rs-tests", features = ["freertos"] }
+osal-rs = { path = "../osal-rs/osal-rs", features = ["freertos"], optional = true }
+
+[[example]]
+name = "main_example"
+path = "examples/main_example.rs"
+
+[[example]]
+name = "parser_example"
+path = "examples/parser_example.rs"
+
+[[example]]
+name = "no_std_basic"
+path = "examples/no_std_basic.rs"
+
+[[example]]
+name = "no_std_advanced"
+path = "examples/no_std_advanced.rs"
+
+[[example]]
+name = "no_std_uart_device"
+path = "examples/no_std_uart_device.rs"
 
 [profile.dev]
 panic = "abort"

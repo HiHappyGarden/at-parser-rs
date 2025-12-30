@@ -78,7 +78,8 @@ impl<'a> Args<'a> {
 Implement the `AtContext` trait for your command handlers:
 
 ```rust
-use parser_rs::{AtContext, AtResult, AtError, Args};
+use parser_rs::context::AtContext;
+use parser_rs::{AtResult, AtError, Args};
 
 /// Echo command - returns/sets echo state
 pub struct EchoModule {
@@ -88,24 +89,37 @@ pub struct EchoModule {
 impl AtContext for EchoModule {
     // Execute: return current echo state
     fn exec(&self) -> AtResult<'static> {
+        if self.echo {
+            Ok("ECHO: ON")
+        } else {
+            Ok("ECHO: OFF")
+        }
+    }
+
+    // Query: return current echo value
+    fn query(&mut self) -> AtResult<'static> {
         if self.echo { Ok("1") } else { Ok("0") }
     }
 
     // Set: enable/disable echo
     fn set(&mut self, args: Args) -> AtResult<'static> {
         let v = args.get(0).ok_or(AtError::InvalidArgs)?;
-        self.echo = v == "1";
-        Ok("OK")
+        match v {
+            "0" => {
+                self.echo = false;
+                Ok("ECHO OFF")
+            }
+            "1" => {
+                self.echo = true;
+                Ok("ECHO ON")
+            }
+            _ => Err(AtError::InvalidArgs),
+        }
     }
 
-    // Test: show valid values
+    // Test: show valid values and usage
     fn test(&mut self) -> AtResult<'static> {
-        Ok("0,1")
-    }
-
-    // Help: provide command description
-    fn help(&self) -> AtResult<'static> {
-        Ok("Enable/disable command echo. Usage: AT+ECHO=<0|1>")
+        Ok("Valid values: 0 (OFF), 1 (ON)")
     }
 }
 
@@ -116,25 +130,32 @@ impl AtContext for ResetModule {
     fn exec(&self) -> AtResult<'static> {
         // Trigger hardware reset
         // reset_system();
-        Ok("OK")
+        Ok("OK - System reset")
     }
 
-    fn help(&self) -> AtResult<'static> {
-        Ok("Reset the system. Usage: AT+RST")
+    fn test(&mut self) -> AtResult<'static> {
+        Ok("Reset the system")
     }
 }
 ```
 
-### 2. Define Static Module Instances
+### 2. Create Module Instances
 
-For embedded/`no_std` environments, use static mutable variables:
+For standard applications, create instances on the stack:
+
+```rust
+let mut echo = EchoModule { echo: false };
+let mut reset = ResetModule;
+```
+
+For embedded/`no_std` environments with `static mut` (single-threaded only):
 
 ```rust
 static mut ECHO: EchoModule = EchoModule { echo: false };
 static mut RESET: ResetModule = ResetModule;
 ```
 
-> **Note**: `static mut` is safe in single-threaded contexts. For RTOS or multi-threaded applications, use `Mutex` or `RefCell` for synchronization.
+> **Note**: `static mut` requires `unsafe` blocks and is only safe in single-threaded contexts. For RTOS or multi-threaded applications, use proper synchronization primitives.
 
 ### 3. Initialize Parser and Register Commands
 
@@ -143,46 +164,44 @@ use parser_rs::parser::AtParser;
 
 let mut parser = AtParser::new();
 
-unsafe {
-    static COMMANDS: &[(&str, &mut dyn AtContext)] = &[
-        ("AT+ECHO", &mut ECHO),
-        ("AT+RST", &mut RESET),
-    ];
+let commands: &mut [(&str, &mut dyn AtContext)] = &mut [
+    ("AT+ECHO", &mut echo),
+    ("AT+RST", &mut reset),
+];
 
-    parser.set_commands(COMMANDS);
-}
+parser.set_commands(commands);
 ```
 
 ### 4. Execute Commands
 
 ```rust
-// Set echo to enabled
-match parser.execute("AT+ECHO=1") {
-    Ok(response) => println!("Response: {}", response),  // "OK"
+// Execute: show current state
+match parser.execute("AT+ECHO") {
+    Ok(response) => println!("Response: {}", response),  // "ECHO: OFF"
     Err(e) => println!("Error: {:?}", e),
 }
 
-// Query current echo state
+// Test: show valid values
+match parser.execute("AT+ECHO=?") {
+    Ok(response) => println!("Valid: {}", response),     // "Valid values: 0 (OFF), 1 (ON)"
+    Err(e) => println!("Error: {:?}", e),
+}
+
+// Set: enable echo
+match parser.execute("AT+ECHO=1") {
+    Ok(response) => println!("Response: {}", response),  // "ECHO ON"
+    Err(e) => println!("Error: {:?}", e),
+}
+
+// Query: get current value
 match parser.execute("AT+ECHO?") {
     Ok(response) => println!("Echo: {}", response),      // "1"
     Err(e) => println!("Error: {:?}", e),
 }
 
-// Test supported values
-match parser.execute("AT+ECHO=?") {
-    Ok(response) => println!("Valid: {}", response),     // "0,1"
-    Err(e) => println!("Error: {:?}", e),
-}
-
 // Execute reset
 match parser.execute("AT+RST") {
-    Ok(response) => println!("Response: {}", response),  // "OK"
-    Err(e) => println!("Error: {:?}", e),
-}
-
-// Get command help
-match parser.execute("AT+ECHO=H") {
-    Ok(response) => println!("Help: {}", response),      // "Enable/disable command echo..."
+    Ok(response) => println!("Response: {}", response),  // "OK - System reset"
     Err(e) => println!("Error: {:?}", e),
 }
 
@@ -233,24 +252,18 @@ impl AtContext for UartModule {
         Ok("OK")
     }
 
-    // Test: show valid configurations
+    // Test: show valid configurations and usage
     fn test(&mut self) -> AtResult<'static> {
-        Ok("(9600,19200,38400,57600,115200),(7,8)")
-    }
-
-    // Help: provide usage information
-    fn help(&self) -> AtResult<'static> {
-        Ok("Configure UART parameters. Usage: AT+UART=<baudrate>,<data_bits>")
+        Ok("AT+UART=<baudrate>,<data_bits> where baudrate: 9600-115200, data_bits: 7|8")
     }
 }
 ```
 
 Usage:
 ```rust
-parser.execute("AT+UART=?");        // "(9600,19200,38400,57600,115200),(7,8)"
+parser.execute("AT+UART=?");        // "AT+UART=<baudrate>,<data_bits> where..."
 parser.execute("AT+UART=115200,8"); // "OK"
 parser.execute("AT+UART?");         // "115200,8"
-parser.execute("AT+UART=H");        // "Configure UART parameters..."
 ```
 
 ## Parsing Arguments
@@ -299,6 +312,22 @@ static MODULE: Mutex<RefCell<MyModule>> = Mutex::new(RefCell::new(MyModule::new(
 3. **Handle errors gracefully**: Use appropriate `AtError` variants for different failure modes
 4. **Document test responses**: Use `test()` to provide clear usage information
 5. **Minimize state**: Keep module state simple and thread-safe
+
+## Examples
+
+The library includes several example files demonstrating different usage patterns:
+
+- **`main_example.rs`** - Complete demonstration with multiple command types (Echo, Reset, Info, LED)
+- **`parser_example.rs`** - Shows direct usage of the `AtParser` with comprehensive tests
+- **`no_std_basic.rs`** - Basic patterns for no_std/embedded environments
+- **`no_std_advanced.rs`** - Advanced patterns with custom error handling
+- **`no_std_uart_device.rs`** - UART and device configuration example
+
+Run examples with:
+```bash
+cargo run --example main_example --no-default-features
+cargo run --example parser_example --no-default-features
+```
 
 ## License
 
