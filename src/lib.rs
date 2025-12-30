@@ -4,7 +4,7 @@
 //! This library provides a flexible parser for AT commands, commonly used in
 //! embedded systems and communication devices. It supports no_std environments.
 
-#![cfg_attr(not(feature = "enable_panic"), no_std)]
+#![cfg_attr(feature = "enable_panic", no_std)]
 
 #[cfg(feature = "enable_panic")]
 extern crate alloc;
@@ -13,12 +13,8 @@ extern crate alloc;
 extern crate osal_rs;
 
 #[cfg(feature = "enable_panic")]
-#[global_allocator]
-static ALLOC: alloc::alloc::Global = alloc::alloc::Global;
-
-#[cfg(feature = "enable_panic")]
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
+fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 

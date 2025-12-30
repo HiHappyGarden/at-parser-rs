@@ -11,7 +11,7 @@ repository = "https://github.com/HiHappyGarden/at-parser-rs.git"
 crate-type = ["rlib"]
 
 [features]
-default = ["osal_rs"]
+default = []
 osal_rs = ["dep:osal-rs"]
 enable_panic = []
 
