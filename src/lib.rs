@@ -3,7 +3,6 @@
 extern crate alloc;
 extern crate osal_rs;
 
-pub mod command;
 pub mod context;
 pub mod parser;
 
