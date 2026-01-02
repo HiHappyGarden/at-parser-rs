@@ -1,6 +1,6 @@
 [package]
 name = "at-parser-rs"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Antonio Salsi <passy.linux@zresa.it>"]
 description = "A flexible AT command parser for embedded systems and communication devices with no_std support"
