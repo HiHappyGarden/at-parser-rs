@@ -2,6 +2,10 @@
 
 A lightweight, `no_std` AT command parser library for embedded Rust applications.
 
+[![Crates.io](https://img.shields.io/crates/v/at-parser-rs.svg)](https://crates.io/crates/at-parser-rs)
+[![Documentation](https://docs.rs/at-parser-rs/badge.svg)](https://docs.rs/at-parser-rs)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
+
 ## Overview
 
 AT-Parser-RS provides a flexible framework for implementing AT command interfaces in embedded systems. It supports the standard AT command syntax including execution, query, test, and set operations.
