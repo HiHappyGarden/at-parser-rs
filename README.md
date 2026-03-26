@@ -4,7 +4,7 @@ A lightweight, `no_std` AT command parser library for embedded Rust applications
 
 [![Crates.io](https://img.shields.io/crates/v/at-parser-rs.svg)](https://crates.io/crates/at-parser-rs)
 [![Documentation](https://docs.rs/at-parser-rs/badge.svg)](https://docs.rs/at-parser-rs)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
+[![License: LGPL-2.1](https://img.shields.io/badge/License-LGPL%202.1-blue.svg)](LICENSE)
 
 ## Overview
 
@@ -344,4 +344,4 @@ cargo run --example embedded_uart_config --no-default-features
 
 ## License
 
-This project is licensed under the same terms as the parent project.
+This project is licensed under the GNU Lesser General Public License v2.1 or later (LGPL-2.1-or-later) - see the [LICENSE](LICENSE) file for details.
