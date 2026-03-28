@@ -61,6 +61,8 @@ enum AtForm<'a> {
 /// ```rust,no_run
 /// # use at_parser_rs::parser::AtParser;
 /// # use at_parser_rs::context::AtContext;
+/// # struct Dummy; impl AtContext<64> for Dummy {}
+/// # let mut echo_handler = Dummy; let mut reset_handler = Dummy;
 /// const SIZE: usize = 64;
 /// let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
 /// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
@@ -73,7 +75,9 @@ enum AtForm<'a> {
 /// ## With concrete types (for homogeneous handlers):
 /// ```rust,no_run
 /// # use at_parser_rs::parser::AtParser;
-/// # struct MyHandler;
+/// # use at_parser_rs::context::AtContext;
+/// # struct MyHandler; impl AtContext<64> for MyHandler {}
+/// # let mut handler1 = MyHandler; let mut handler2 = MyHandler;
 /// const SIZE: usize = 64;
 /// let mut parser: AtParser<MyHandler, SIZE> = AtParser::new();
 /// let commands: &mut [(&str, &mut MyHandler)] = &mut [
