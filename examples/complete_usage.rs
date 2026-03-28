@@ -19,50 +19,61 @@
  ***************************************************************************/
  
 //! Complete example demonstrating the AT command parser functionality
+//!
+//! **Note**: no_std compatible example - designed to compile and run on embedded
+//! targets. Demonstrates all AT command forms without std dependency.
+
+#![no_std]
+#![no_main]
+#![allow(dead_code, unused_variables)]
+
+extern crate at_parser_rs;
 
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{Args, AtError, AtResult};
+use at_parser_rs::{Args, AtError, AtResult, Bytes};
+
+const SIZE: usize = 64;
 
 /// Echo command module - manages echo state
 pub struct EchoModule {
     pub echo: bool,
 }
 
-impl AtContext for EchoModule {
+impl AtContext<SIZE> for EchoModule {
     /// Execute: return current echo state
-    fn exec(&self) -> AtResult<'static> {
+    fn exec(&self) -> AtResult<SIZE> {
         if self.echo {
-            Ok("ECHO: ON")
+            Ok(Bytes::from_str("ECHO: ON"))
         } else {
-            Ok("ECHO: OFF")
+            Ok(Bytes::from_str("ECHO: OFF"))
         }
     }
 
     /// Query: return current echo value
-    fn query(&mut self) -> AtResult<'static> {
+    fn query(&mut self) -> AtResult<SIZE> {
         if self.echo {
-            Ok("1")
+            Ok(Bytes::from_str("1"))
         } else {
-            Ok("0")
+            Ok(Bytes::from_str("0"))
         }
     }
 
     /// Test: show valid values
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("Valid values: 0 (OFF), 1 (ON)")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
     }
 
     /// Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
         match value {
             "0" => {
                 self.echo = false;
-                Ok("ECHO OFF")
+                Ok(Bytes::from_str("ECHO OFF"))
             }
             "1" => {
                 self.echo = true;
-                Ok("ECHO ON")
+                Ok(Bytes::from_str("ECHO ON"))
             }
             _ => Err(AtError::InvalidArgs),
         }
@@ -72,16 +83,15 @@ impl AtContext for EchoModule {
 /// Reset command module - simulates system reset
 pub struct ResetModule;
 
-impl AtContext for ResetModule {
+impl AtContext<SIZE> for ResetModule {
     /// Execute: perform reset
-    fn exec(&self) -> AtResult<'static> {
-        println!("  [System reset triggered]");
-        Ok("OK - System reset")
+    fn exec(&self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("OK - System reset"))
     }
 
     /// Test: show command description
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("Reset the system")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("Reset the system"))
     }
 }
 
@@ -90,15 +100,15 @@ pub struct InfoModule {
     pub version: &'static str,
 }
 
-impl AtContext for InfoModule {
+impl AtContext<SIZE> for InfoModule {
     /// Execute: return system info
-    fn exec(&self) -> AtResult<'static> {
-        Ok(self.version)
+    fn exec(&self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str(self.version))
     }
 
     /// Query: return detailed info
-    fn query(&mut self) -> AtResult<'static> {
-        Ok("AT-Parser-RS v1.0.0 - AT Command Parser Library")
+    fn query(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("AT-Parser-RS v1.0.0 - AT Command Parser Library"))
     }
 }
 
@@ -108,32 +118,32 @@ pub struct LedModule {
     pub brightness: u8,
 }
 
-impl AtContext for LedModule {
+impl AtContext<SIZE> for LedModule {
     /// Execute: return current LED state
-    fn exec(&self) -> AtResult<'static> {
+    fn exec(&self) -> AtResult<SIZE> {
         if self.state {
-            Ok("LED: ON")
+            Ok(Bytes::from_str("LED: ON"))
         } else {
-            Ok("LED: OFF")
+            Ok(Bytes::from_str("LED: OFF"))
         }
     }
 
     /// Query: return state and brightness
-    fn query(&mut self) -> AtResult<'static> {
+    fn query(&mut self) -> AtResult<SIZE> {
         if self.state {
-            Ok("1,100")
+            Ok(Bytes::from_str("1,100"))
         } else {
-            Ok("0,0")
+            Ok(Bytes::from_str("0,0"))
         }
     }
 
     /// Test: show usage
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("AT+LED=<state>,<brightness> where state: 0|1, brightness: 0-100")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("AT+LED=<state>,<brightness> where state: 0|1, brightness: 0-100"))
     }
 
     /// Set: change LED state and brightness
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         let state_str = args.get(0).ok_or(AtError::InvalidArgs)?;
         
         self.state = match state_str {
@@ -154,29 +164,23 @@ impl AtContext for LedModule {
         }
 
         if self.state {
-            Ok("LED ON")
+            Ok(Bytes::from_str("LED ON"))
         } else {
-            Ok("LED OFF")
+            Ok(Bytes::from_str("LED OFF"))
         }
     }
 }
 
-/// Helper function to execute a command and print the result
-fn execute_command(cmd: &str, name: &str, module: &mut dyn AtContext) {
-    println!("\n> {}", cmd);
-    
+/// Helper function to execute a command and ignore the result
+fn execute_command(cmd: &str, name: &str, module: &mut dyn AtContext<SIZE>) {
     let result = if let Some(rest) = cmd.strip_prefix(name) {
         if rest.is_empty() {
-            // Execute form: AT+CMD
             module.exec()
         } else if rest == "?" {
-            // Query form: AT+CMD?
             module.query()
         } else if rest == "=?" {
-            // Test form: AT+CMD=?
             module.test()
         } else if let Some(args_str) = rest.strip_prefix('=') {
-            // Set form: AT+CMD=args
             module.set(Args { raw: args_str })
         } else {
             Err(AtError::InvalidArgs)
@@ -184,63 +188,41 @@ fn execute_command(cmd: &str, name: &str, module: &mut dyn AtContext) {
     } else {
         Err(AtError::UnknownCommand)
     };
-    
-    match result {
-        Ok(response) => println!("  Response: {}", response),
-        Err(AtError::UnknownCommand) => println!("  Error: Unknown command"),
-        Err(AtError::NotSupported) => println!("  Error: Operation not supported"),
-        Err(AtError::InvalidArgs) => println!("  Error: Invalid arguments"),
-    }
+    let _ = result;
 }
 
-fn main() {
-    println!("=== AT Command Parser Example ===\n");
-    println!("Available commands: AT+ECHO, AT+RST, AT+INFO, AT+LED\n");
-
-    // Create module instances
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> ! {
     let mut echo = EchoModule { echo: false };
     let mut reset = ResetModule;
     let mut info = InfoModule { version: "v1.0.0" };
-    let mut led = LedModule {
-        state: false,
-        brightness: 0,
-    };
+    let mut led = LedModule { state: false, brightness: 0 };
 
-    // Demonstrate all command forms
-    
-    // 1. INFO command examples
-    println!("--- INFO Command ---");
-    execute_command("AT+INFO", "AT+INFO", &mut info);      // Execute
-    execute_command("AT+INFO?", "AT+INFO", &mut info);     // Query
+    // INFO
+    execute_command("AT+INFO",   "AT+INFO", &mut info);
+    execute_command("AT+INFO?",  "AT+INFO", &mut info);
 
-    // 2. ECHO command examples
-    println!("\n--- ECHO Command ---");
-    execute_command("AT+ECHO", "AT+ECHO", &mut echo);      // Execute (current state)
-    execute_command("AT+ECHO=?", "AT+ECHO", &mut echo);    // Test (show valid values)
-    execute_command("AT+ECHO=1", "AT+ECHO", &mut echo);    // Set (enable)
-    execute_command("AT+ECHO?", "AT+ECHO", &mut echo);     // Query (check state)
-    execute_command("AT+ECHO", "AT+ECHO", &mut echo);      // Execute (should show ON)
-    execute_command("AT+ECHO=0", "AT+ECHO", &mut echo);    // Set (disable)
-    execute_command("AT+ECHO", "AT+ECHO", &mut echo);      // Execute (should show OFF)
+    // ECHO
+    execute_command("AT+ECHO",   "AT+ECHO", &mut echo);
+    execute_command("AT+ECHO=?", "AT+ECHO", &mut echo);
+    execute_command("AT+ECHO=1", "AT+ECHO", &mut echo);
+    execute_command("AT+ECHO?",  "AT+ECHO", &mut echo);
+    execute_command("AT+ECHO=0", "AT+ECHO", &mut echo);
 
-    // 3. LED command examples
-    println!("\n--- LED Command ---");
-    execute_command("AT+LED=?", "AT+LED", &mut led);       // Test (show usage)
-    execute_command("AT+LED=1", "AT+LED", &mut led);       // Set (turn on)
-    execute_command("AT+LED?", "AT+LED", &mut led);        // Query
-    execute_command("AT+LED=1,75", "AT+LED", &mut led);    // Set with brightness
-    execute_command("AT+LED", "AT+LED", &mut led);         // Execute (current state)
-    execute_command("AT+LED=0", "AT+LED", &mut led);       // Set (turn off)
+    // LED
+    execute_command("AT+LED=?",   "AT+LED", &mut led);
+    execute_command("AT+LED=1",   "AT+LED", &mut led);
+    execute_command("AT+LED?",    "AT+LED", &mut led);
+    execute_command("AT+LED=1,75","AT+LED", &mut led);
+    execute_command("AT+LED=0",   "AT+LED", &mut led);
 
-    // 4. RESET command example
-    println!("\n--- RESET Command ---");
-    execute_command("AT+RST=?", "AT+RST", &mut reset);     // Test
-    execute_command("AT+RST", "AT+RST", &mut reset);       // Execute
+    // RESET
+    execute_command("AT+RST=?", "AT+RST", &mut reset);
+    execute_command("AT+RST",   "AT+RST", &mut reset);
 
-    // 5. Error handling examples
-    println!("\n--- Error Handling ---");
-    execute_command("AT+ECHO=2", "AT+ECHO", &mut echo);    // Invalid argument
-    execute_command("AT+INFO=1", "AT+INFO", &mut info);    // Set not supported for INFO
+    // Error cases
+    execute_command("AT+ECHO=2", "AT+ECHO", &mut echo);  // -> Err(InvalidArgs)
+    execute_command("AT+INFO=1", "AT+INFO", &mut info);  // -> Err(NotSupported)
 
-    println!("\n=== Example completed ===");
+    loop {}
 }

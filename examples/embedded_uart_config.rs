@@ -19,14 +19,24 @@
  ***************************************************************************/
 
 //! Example: AT command table with UART and device configuration handling
-//! This example demonstrates code patterns suitable for no_std/embedded environments
+//!
+//! **Note**: This is a pattern demonstration example showing how to implement
+//! configuration commands in no_std/embedded environments. It illustrates
+//! the `AtContext` trait implementation for device-specific commands.
+//!
+//! In a real embedded application, replace the dummy UART implementation
+//! with your platform's actual hardware abstraction layer (HAL).
 
 #![allow(dead_code)]
+#![no_std]
+#![no_main]
 
 extern crate at_parser_rs;
 
-use at_parser_rs::{Args, AtError, AtResult};
+use at_parser_rs::{Args, AtError, AtResult, Bytes};
 use at_parser_rs::context::AtContext;
+
+const SIZE: usize = 64;
 
 // UART struct with AtContext implementation for UARTSEND command
 struct DummyUart {
@@ -45,15 +55,15 @@ impl DummyUart {
     }
 }
 
-impl AtContext for DummyUart {
-    fn exec(&self) -> AtResult<'static> {
+impl AtContext<SIZE> for DummyUart {
+    fn exec(&self) -> AtResult<SIZE> {
         // Not supported for UARTSEND
         Err(AtError::NotSupported)
     }
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         if let Some(data) = args.get(0) {
             self.write(data);
-            Ok("SENT")
+            Ok(Bytes::from_str("SENT"))
         } else {
             Err(AtError::InvalidArgs)
         }
@@ -63,24 +73,24 @@ impl AtContext for DummyUart {
 // Device configuration context
 struct ConfigContext;
 
-impl AtContext for ConfigContext {
-    fn exec(&self) -> AtResult<'static> {
+impl AtContext<SIZE> for ConfigContext {
+    fn exec(&self) -> AtResult<SIZE> {
         // Not supported for SETCFG
         Err(AtError::NotSupported)
     }
     
-    fn query(&mut self) -> AtResult<'static> {
+    fn query(&mut self) -> AtResult<SIZE> {
         // Return current configuration as a static string
         // In real implementation, format the values dynamically
-        Ok("115200,1")
+        Ok(Bytes::from_str("115200,1"))
     }
     
-    fn test(&mut self) -> AtResult<'static> {
+    fn test(&mut self) -> AtResult<SIZE> {
         // Return supported configuration options
-        Ok("+SETCFG: (baudrate),(mode)")
+        Ok(Bytes::from_str("+SETCFG: (baudrate),(mode)"))
     }
     
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         let baud = args.get(0).and_then(|s| s.parse::<u32>().ok());
         let mode = args.get(1).and_then(|s| s.parse::<u8>().ok());
         match (baud, mode) {
@@ -88,7 +98,7 @@ impl AtContext for ConfigContext {
                 // Configure UART
                 UART.baudrate = b;
                 UART.mode = m;
-                Ok("CONFIGURED")
+                Ok(Bytes::from_str("CONFIGURED"))
             },
             _ => Err(AtError::InvalidArgs),
         }
@@ -113,7 +123,9 @@ fn example_with_commands_macro() -> Result<&'static str, AtError> {
 }
 
 // Mock main for compilation (in real embedded code, this would be in your firmware)
-fn main() {
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> ! {
     // Example usage - in embedded this would be called from your main loop
     let _result = example_with_commands_macro();
+    loop {}
 }

@@ -19,9 +19,17 @@
  ***************************************************************************/
  
 //! Advanced example: macro usage and custom error handling
-//! This example demonstrates code patterns suitable for no_std environments
+//!
+//! **Note**: This is a pattern demonstration example showing code patterns
+//! suitable for no_std environments. It illustrates error handling techniques
+//! and safe static initialization approaches for embedded systems.
+//!
+//! In a real embedded application, adapt these patterns to your specific
+//! hardware platform and synchronization requirements.
 
 #![allow(dead_code)]
+#![no_std]
+#![no_main]
 
 extern crate at_parser_rs;
 
@@ -61,7 +69,9 @@ fn example_usage() -> &'static str {
 }
 
 // Mock main for compilation (in real embedded code, this would be in your firmware)
-fn main() {
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> ! {
     // Example usage - in embedded this would be called from your main loop
     let _result = example_usage();
+    loop {}
 }

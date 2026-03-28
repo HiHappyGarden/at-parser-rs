@@ -42,17 +42,56 @@ enum AtForm<'a> {
 }
 
 /// The main AT command parser
-/// Generic over T which must implement AtContext trait
-pub struct AtParser<'a, T>
+///
+/// Generic over `T` which must implement the [`AtContext<SIZE>`](crate::context::AtContext) trait,
+/// and over the const `SIZE` which determines the response buffer size.
+///
+/// # Generic Design
+///
+/// The parser is generic over the command handler type `T` and response size `SIZE` to allow
+/// compile-time type checking when all handlers are of the same type. This provides:
+///
+/// - **Type safety**: Compile-time verification of handler types
+/// - **Zero overhead**: No dynamic dispatch when using concrete types
+/// - **Flexibility**: Can be used with trait objects (`dyn AtContext<SIZE>`) for mixed handler types
+///
+/// # Usage Patterns
+///
+/// ## With trait objects (recommended for mixed types):
+/// ```rust,no_run
+/// # use at_parser_rs::parser::AtParser;
+/// # use at_parser_rs::context::AtContext;
+/// const SIZE: usize = 64;
+/// let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
+/// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
+///     ("AT+ECHO", &mut echo_handler),
+///     ("AT+RST", &mut reset_handler),
+/// ];
+/// parser.set_commands(commands);
+/// ```
+///
+/// ## With concrete types (for homogeneous handlers):
+/// ```rust,no_run
+/// # use at_parser_rs::parser::AtParser;
+/// # struct MyHandler;
+/// const SIZE: usize = 64;
+/// let mut parser: AtParser<MyHandler, SIZE> = AtParser::new();
+/// let commands: &mut [(&str, &mut MyHandler)] = &mut [
+///     ("AT+CMD1", &mut handler1),
+///     ("AT+CMD2", &mut handler2),
+/// ];
+/// parser.set_commands(commands);
+/// ```
+pub struct AtParser<'a, T, const SIZE: usize>
 where
-    T: AtContext {
+    T: AtContext<SIZE> + ?Sized {
     /// Array of registered commands with their name and handler
     pub commands: &'a mut [(&'static str, &'a mut T)],
 }
 
-impl<'a, T> AtParser<'a, T>
+impl<'a, T, const SIZE: usize> AtParser<'a, T, SIZE>
 where
-    T: AtContext {
+    T: AtContext<SIZE> + ?Sized {
 
     /// Create a new empty parser
     pub fn new() -> Self {
@@ -70,9 +109,9 @@ where
     /// * `input` - The raw AT command string (e.g., "AT+CMD?")
     /// 
     /// # Returns
-    /// * `Ok(&str)` - Success response from the command handler
+    /// * `Ok(Bytes<SIZE>)` - Success response from the command handler
     /// * `Err(AtError)` - Error if parsing fails or command is not found
-    pub fn execute(&mut self, input: &str) -> AtResult<'static> {
+    pub fn execute(&mut self, input: &str) -> AtResult<SIZE> {
         let input = input.trim();
         let (name, form) = parse(input)?;
 

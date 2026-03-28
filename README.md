@@ -13,7 +13,7 @@ AT-Parser-RS provides a flexible framework for implementing AT command interface
 ## Features
 
 - `no_std` compatible - suitable for bare-metal and embedded environments
-- Zero-allocation parsing using string slices
+- Fixed-size response buffers via `Bytes<SIZE>` — no heap allocation
 - Support for all AT command forms:
   - `AT+CMD` - Execute command
   - `AT+CMD?` - Query current value
@@ -21,6 +21,26 @@ AT-Parser-RS provides a flexible framework for implementing AT command interface
   - `AT+CMD=<args>` - Set new value(s)
 - Type-safe command registration via traits
 - Static command definitions (suitable for embedded/RTOS)
+
+### Feature Flags
+
+The library supports the following optional features:
+
+- **`osal_rs`** - Enables integration with FreeRTOS through the [osal-rs](https://crates.io/crates/osal-rs) library for RTOS-based applications. Provides synchronization primitives like `Mutex` for thread-safe command handling.
+- **`enable_panic`** - Enables a custom panic handler for `no_std` environments, providing a minimal panic implementation for embedded targets.
+
+By default, no features are enabled, providing pure `no_std` compatibility without external dependencies.
+
+```bash
+# Build with FreeRTOS support
+cargo build --features="osal_rs"
+
+# Build with custom panic handler
+cargo build --features="enable_panic"
+
+# Build with both features
+cargo build --features="osal_rs,enable_panic"
+```
 
 ## Command Forms
 
@@ -32,33 +52,57 @@ The parser supports four standard AT command forms:
 | **Query** | `AT+CMD?` | Get current setting | `AT+ECHO?` |
 | **Test** | `AT+CMD=?` | Get supported values | `AT+ECHO=?` |
 | **Set** | `AT+CMD=<args>` | Set new value(s) | `AT+ECHO=1` |
+
+> **Note**: All commands must start with the `AT` prefix (e.g., `AT+CMD`, not just `+CMD`). The parser expects the full AT command syntax.
+
 ## Core Types
 
-### `AtContext` Trait
+### `AtContext<SIZE>` Trait
 
-The main trait for implementing command handlers. Override only the methods your command needs to support:
+The main trait for implementing command handlers. The const generic `SIZE` defines the response buffer size in bytes. Override only the methods your command needs:
 
 ```rust
-pub trait AtContext {
-    fn exec(&self) -> AtResult<'static>;
-    fn query(&mut self) -> AtResult<'static>;
-    fn test(&mut self) -> AtResult<'static>;
-    fn set(&mut self, args: Args) -> AtResult<'static>;
+pub trait AtContext<const SIZE: usize> {
+    fn exec(&self) -> AtResult<SIZE>;
+    fn query(&mut self) -> AtResult<SIZE>;
+    fn test(&mut self) -> AtResult<SIZE>;
+    fn set(&mut self, args: Args) -> AtResult<SIZE>;
 }
 ```
 
-All methods return `NotSupported` by default.
+All methods return `Err(AtError::NotSupported)` by default.
 
-### `AtResult` and `AtError`
+### `AtResult<SIZE>` and `AtError`
 
 ```rust
-pub type AtResult<'a> = Result<&'a str, AtError>;
+pub type AtResult<const SIZE: usize> = Result<Bytes<SIZE>, AtError>;
 
 pub enum AtError {
     UnknownCommand,   // Command not found
     NotSupported,     // Operation not implemented
     InvalidArgs,      // Invalid argument(s)
 }
+```
+
+### `Bytes<SIZE>`
+
+`Bytes<SIZE>` is a fixed-size byte buffer from `osal-rs` (re-exported by this crate) used to return responses without heap allocation:
+
+```rust
+use at_parser_rs::Bytes;
+
+// Create from a string slice (truncated to SIZE if longer)
+let response = Bytes::<64>::from_str("OK");
+```
+
+### `AtParser<T, SIZE>`
+
+The parser is generic over both the handler type `T` and the response buffer size `SIZE`:
+
+```rust
+pub struct AtParser<'a, T, const SIZE: usize>
+where
+    T: AtContext<SIZE> + ?Sized;
 ```
 
 ### `Args` Structure
@@ -79,66 +123,68 @@ impl<'a> Args<'a> {
 
 ### 1. Define Command Modules
 
-Implement the `AtContext` trait for your command handlers:
+Implement the `AtContext<SIZE>` trait for your command handlers. Choose a buffer size that fits your largest response string:
 
 ```rust
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{AtResult, AtError, Args};
+use at_parser_rs::{AtResult, AtError, Args, Bytes};
+
+const SIZE: usize = 64;
 
 /// Echo command - returns/sets echo state
 pub struct EchoModule {
     pub echo: bool,
 }
 
-impl AtContext for EchoModule {
+impl AtContext<SIZE> for EchoModule {
     // Execute: return current echo state
-    fn exec(&self) -> AtResult<'static> {
+    fn exec(&self) -> AtResult<SIZE> {
         if self.echo {
-            Ok("ECHO: ON")
+            Ok(Bytes::from_str("ECHO: ON"))
         } else {
-            Ok("ECHO: OFF")
+            Ok(Bytes::from_str("ECHO: OFF"))
         }
     }
 
     // Query: return current echo value
-    fn query(&mut self) -> AtResult<'static> {
-        if self.echo { Ok("1") } else { Ok("0") }
+    fn query(&mut self) -> AtResult<SIZE> {
+        if self.echo { Ok(Bytes::from_str("1")) } else { Ok(Bytes::from_str("0")) }
     }
 
     // Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         let v = args.get(0).ok_or(AtError::InvalidArgs)?;
         match v {
             "0" => {
                 self.echo = false;
-                Ok("ECHO OFF")
+                Ok(Bytes::from_str("ECHO OFF"))
             }
             "1" => {
                 self.echo = true;
-                Ok("ECHO ON")
+                Ok(Bytes::from_str("ECHO ON"))
             }
             _ => Err(AtError::InvalidArgs),
         }
     }
 
     // Test: show valid values and usage
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("Valid values: 0 (OFF), 1 (ON)")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
     }
 }
 
 /// Reset command - executes system reset
 pub struct ResetModule;
 
-impl AtContext for ResetModule {
-    fn exec(&self) -> AtResult<'static> {
+impl AtContext<SIZE> for ResetModule {
+    fn exec(&self) -> AtResult<SIZE> {
         // Trigger hardware reset
         // reset_system();
-        Ok("OK - System reset")
+        Ok(Bytes::from_str("OK - System reset"))
     }
 
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("Reset the system")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("Reset the system"))
     }
 }
 ```
@@ -165,10 +211,13 @@ static mut RESET: ResetModule = ResetModule;
 
 ```rust
 use at_parser_rs::parser::AtParser;
+use at_parser_rs::context::AtContext;
 
-let mut parser = AtParser::new();
+const SIZE: usize = 64;
 
-let commands: &mut [(&str, &mut dyn AtContext)] = &mut [
+let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
+
+let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
     ("AT+ECHO", &mut echo),
     ("AT+RST", &mut reset),
 ];
@@ -213,26 +262,33 @@ match parser.execute("AT+RST") {
 match parser.execute("AT+UNKNOWN") {
     Ok(_) => {},
     Err(AtError::UnknownCommand) => println!("Command not found"),
+    Err(_) => {}
 }
 ```
+
+`Bytes<SIZE>` implements `Display`, so it can be printed directly with `{}` or converted to a string via `.to_string()`.
 
 ## Advanced Example: UART Module
 
 ```rust
+use at_parser_rs::{AtResult, AtError, Args, Bytes};
+use at_parser_rs::context::AtContext;
+
+const SIZE: usize = 64;
+
 pub struct UartModule {
     pub baudrate: u32,
     pub data_bits: u8,
 }
 
-impl AtContext for UartModule {
+impl AtContext<SIZE> for UartModule {
     // Query: return current configuration
-    fn query(&mut self) -> AtResult<'static> {
-        // In real code, format to a static buffer
-        Ok("115200,8")
+    fn query(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("115200,8"))
     }
 
     // Set: configure UART
-    fn set(&mut self, args: Args) -> AtResult<'static> {
+    fn set(&mut self, args: Args) -> AtResult<SIZE> {
         let baudrate = args.get(0)
             .ok_or(AtError::InvalidArgs)?
             .parse::<u32>()
@@ -253,12 +309,12 @@ impl AtContext for UartModule {
         // Apply configuration to hardware
         // configure_uart(baudrate, data_bits);
         
-        Ok("OK")
+        Ok(Bytes::from_str("OK"))
     }
 
     // Test: show valid configurations and usage
-    fn test(&mut self) -> AtResult<'static> {
-        Ok("AT+UART=<baudrate>,<data_bits> where baudrate: 9600-115200, data_bits: 7|8")
+    fn test(&mut self) -> AtResult<SIZE> {
+        Ok(Bytes::from_str("AT+UART=<baudrate>,<data_bits> where baudrate: 9600-115200, data_bits: 7|8"))
     }
 }
 ```
@@ -275,15 +331,21 @@ parser.execute("AT+UART?");         // "115200,8"
 The `Args` structure provides a simple interface for accessing comma-separated arguments:
 
 ```rust
-fn set(&mut self, args: Args) -> AtResult<'static> {
+fn set(&mut self, args: Args) -> AtResult<SIZE> {
     let arg0 = args.get(0).ok_or(AtError::InvalidArgs)?;
     let arg1 = args.get(1).ok_or(AtError::InvalidArgs)?;
     let arg2 = args.get(2); // Optional argument
     
     // Process arguments...
-    Ok("OK")
+    Ok(Bytes::from_str("OK"))
 }
 ```
+
+**Important**: `Args::get()` uses 0-based indexing. For a command like `AT+CMD=foo,bar,baz`:
+- `args.get(0)` returns `Some("foo")`
+- `args.get(1)` returns `Some("bar")`
+- `args.get(2)` returns `Some("baz")`
+- `args.get(3)` returns `None`
 
 For numeric arguments:
 ```rust
@@ -309,9 +371,60 @@ use osal_rs::sync::Mutex;
 static MODULE: Mutex<RefCell<MyModule>> = Mutex::new(RefCell::new(MyModule::new()));
 ```
 
+## Using the `at_modules!` Macro
+
+The library provides an `at_modules!` macro for defining static command arrays. The first argument is the `SIZE` const:
+
+```rust
+use at_parser_rs::at_modules;
+use at_parser_rs::context::AtContext;
+
+const SIZE: usize = 64;
+
+static mut ECHO: EchoModule = EchoModule { echo: false };
+static mut RESET: ResetModule = ResetModule;
+
+at_modules! {
+    SIZE;
+    "AT+ECHO" => ECHO,
+    "AT+RST" => RESET,
+}
+```
+
+### Limitations and Considerations
+
+⚠️ **Important**: This macro has significant limitations:
+
+1. **Unsafe**: The macro creates mutable references to static data, requiring `unsafe` blocks
+2. **Single-threaded only**: Not suitable for multi-threaded or RTOS environments
+3. **Limited flexibility**: Cannot mix different command handler types
+
+### Recommended Alternative
+
+For most applications, the manual approach shown in the examples is preferred:
+
+```rust
+use at_parser_rs::context::AtContext;
+use at_parser_rs::parser::AtParser;
+
+const SIZE: usize = 64;
+
+let mut echo = EchoModule { echo: false };
+let mut reset = ResetModule;
+
+let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
+    ("AT+ECHO", &mut echo),
+    ("AT+RST", &mut reset),
+];
+
+parser.set_commands(commands);
+```
+
+This approach is safer, more flexible, and works in all contexts (stack, heap, RTOS).
+
 ## Best Practices
 
-1. **Keep responses static**: Return `&'static str` when possible to avoid allocations
+1. **Choose an appropriate `SIZE`**: Pick a buffer size that fits your largest response string; responses longer than `SIZE` are silently truncated
 2. **Validate arguments**: Always check argument count and validity before processing
 3. **Handle errors gracefully**: Use appropriate `AtError` variants for different failure modes
 4. **Document test responses**: Use `test()` to provide clear usage information
@@ -326,17 +439,22 @@ The library includes several example files demonstrating different usage pattern
 - **`basic_parser.rs`** - Shows direct usage of the `AtParser` with comprehensive test cases
 
 ### Embedded/no_std Examples
+
+These examples demonstrate code patterns suitable for `no_std` environments:
+
 - **`embedded_basic.rs`** - Basic patterns and error handling for no_std/embedded environments
-- **`embedded_error_handling.rs`** - Advanced patterns with custom error handling and macros
-- **`embedded_uart_config.rs`** - UART and device configuration with AtContext implementation
+- **`embedded_error_handling.rs`** - Patterns for custom error handling and type conversions
+- **`embedded_uart_config.rs`** - UART and device configuration patterns with `AtContext` implementation
+
+> **Note**: The embedded examples are designed to show code patterns and best practices rather than being fully functional standalone programs. They demonstrate how to structure code for embedded/no_std contexts.
 
 Run examples with:
 ```bash
-# Standard examples
+# Standard examples (fully functional)
 cargo run --example complete_usage
 cargo run --example basic_parser
 
-# Embedded examples (no_std)
+# Embedded examples (demonstrate patterns)
 cargo run --example embedded_basic --no-default-features
 cargo run --example embedded_error_handling --no-default-features
 cargo run --example embedded_uart_config --no-default-features

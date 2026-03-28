@@ -1,6 +1,6 @@
 [package]
 name = "at-parser-rs"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 authors = ["Antonio Salsi <passy.linux@zresa.it>"]
 description = "A flexible AT command parser for embedded systems and communication devices with no_std support"
@@ -16,12 +16,14 @@ categories = ["embedded", "no-std", "parser-implementations"]
 crate-type = ["rlib"]
 
 [features]
-default = []
-osal_rs = ["dep:osal-rs"]
-enable_panic = []
+default = ["freertos"]
+freertos = ["osal-rs/freertos"]
+posix = ["osal-rs/posix"]
+std = ["osal-rs/std"]
+disable_panic = ["osal-rs/disable_panic"]
 
 [dependencies]
-osal-rs = { version = "0.4", path = "../osal-rs/osal-rs", features = ["freertos"], optional = true }
+osal-rs = { version = "0.4", path = "../osal-rs/osal-rs", default-features = false }
 
 [[example]]
 name = "complete_usage"
