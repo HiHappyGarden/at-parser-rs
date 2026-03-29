@@ -101,7 +101,7 @@ use core::iter::Iterator;
 use core::option::Option;
 use core::result::Result;
 
-pub use osal_rs::utils::Bytes;
+use osal_rs::utils::Bytes;
 
 pub mod context;
 pub mod parser;
