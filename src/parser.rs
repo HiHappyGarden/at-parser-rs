@@ -98,7 +98,7 @@ where
     T: AtContext<SIZE> + ?Sized {
 
     /// Create a new empty parser
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { commands: & mut [] }
     }
 
