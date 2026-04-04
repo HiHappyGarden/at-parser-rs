@@ -142,51 +142,44 @@ impl<'a> Args<'a> {
 }
 
 
-/// Macro to define AT command modules
+/// Wraps a value in double-quote characters (`"`).
 ///
-/// Creates a static array of command names and their associated context handlers.
+/// Expands to a string literal `"\"<value>\""` suitable for use inside
+/// [`at_response!`] or [`at_cmd_response!`] arguments when the protocol
+/// requires quoted strings.
 ///
-/// # Warning
+/// # Syntax
 ///
-/// This macro uses `unsafe` to create mutable references to static data.
-/// It is only suitable for single-threaded embedded contexts.
-///
-/// # Limitations
-///
-/// - **Unsafe**: Requires `unsafe` blocks to use
-/// - **Single-threaded only**: Not safe for RTOS or multi-threaded environments
-/// - **Limited flexibility**: Cannot mix different handler types
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use at_parser_rs::at_modules;
-/// use at_parser_rs::context::AtContext;
-///
-/// const SIZE: usize = 64;
-///
-/// static mut ECHO: EchoModule = EchoModule { echo: false };
-/// static mut RESET: ResetModule = ResetModule;
-///
-/// at_modules! {
-///     SIZE;
-///     "AT+ECHO" => ECHO,
-///     "AT+RST" => RESET,
-/// }
+/// ```rust,ignore
+/// at_quoted!(value)
 /// ```
 ///
-/// # Recommended Alternative
-///
-/// For most use cases, prefer the manual approach:
+/// # Examples
 ///
 /// ```rust,no_run
-/// const SIZE: usize = 64;
-/// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-///     ("AT+ECHO", &mut echo_handler),
-///     ("AT+RST", &mut reset_handler),
-/// ];
-/// parser.set_commands(commands);
+/// use at_parser_rs::at_quoted;
+///
+/// let q = at_quoted!("hello");   // → `"hello"`
+/// let q = at_quoted!(42);        // → `"42"`
 /// ```
+///
+/// Inside an AT response:
+///
+/// ```rust,no_run
+/// use at_parser_rs::{at_response, at_quoted};
+///
+/// const SIZE: usize = 64;
+/// let name = "world";
+/// let resp = at_response!(SIZE, "+CMD: "; at_quoted!(name));
+/// // resp contains: +CMD: "world"
+/// ```
+#[macro_export]
+macro_rules! at_quoted {
+    ($val:expr) => {
+        ::core::format_args!("\"{}\"", $val)
+    };
+}
+
 /// Macro to format an AT response with 1–6 comma-separated parameters.
 ///
 /// # Syntax
@@ -232,6 +225,130 @@ macro_rules! at_response {
     }};
 }
 
+
+
+/// Declares a static `COMMANDS` table mapping AT command strings to their handlers.
+///
+/// This macro expands into a `static COMMANDS` binding of type
+/// `&[(&'static str, &mut dyn AtContext<SIZE>)]`, which can then be passed to
+/// [`AtParser::set_commands`](crate::parser::AtParser::set_commands).
+///
+/// # Syntax
+///
+/// ```rust,ignore
+/// at_modules! {
+///     SIZE;
+///     "AT+CMD1" => HANDLER1,
+///     "AT+CMD2" => HANDLER2,
+/// }
+/// ```
+///
+/// - `SIZE` — `const usize` that defines the response buffer capacity (must match the
+///   capacity used by [`AtParser`](crate::parser::AtParser) and every [`AtContext`](crate::context::AtContext) impl).
+/// - `"AT+CMDn"` — the AT command string the parser will match against.
+/// - `HANDLERn` — a `static mut` variable that implements [`AtContext<SIZE>`](crate::context::AtContext).
+///
+/// # Safety
+///
+/// The macro uses an `unsafe` block internally to obtain `&mut` references to
+/// `static mut` items.  It is the caller's responsibility to ensure:
+///
+/// - **Single-threaded access only** — do not call this in a multi-threaded or
+///   RTOS context without external synchronisation.
+/// - **One call site** — the generated `COMMANDS` symbol is `static`; defining it
+///   more than once in the same scope will cause a compile error.
+///
+/// # Limitations
+///
+/// - All handlers must implement `AtContext` with the **same** `SIZE` constant.
+/// - The generated symbol is always named `COMMANDS`; rename it after expansion
+///   if you need multiple tables.
+///
+/// # Example — basic usage
+///
+/// ```rust,no_run
+/// use at_parser_rs::at_modules;
+/// use at_parser_rs::context::AtContext;
+/// use at_parser_rs::{Args, AtResult, AtError};
+/// use osal_rs::utils::Bytes;
+///
+/// const SIZE: usize = 64;
+///
+/// struct EchoModule { echo: bool }
+/// impl AtContext<SIZE> for EchoModule {
+///     fn query(&mut self) -> AtResult<SIZE> {
+///         Ok(Bytes::from_str(if self.echo { "1" } else { "0" }))
+///     }
+///     fn set(&mut self, args: Args) -> AtResult<SIZE> {
+///         match args.get(0) {
+///             Some("0") => { self.echo = false; Ok(Bytes::from_str("OK")) }
+///             Some("1") => { self.echo = true;  Ok(Bytes::from_str("OK")) }
+///             _ => Err(AtError::InvalidArgs),
+///         }
+///     }
+/// }
+///
+/// struct ResetModule;
+/// impl AtContext<SIZE> for ResetModule {
+///     fn execute(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("OK")) }
+/// }
+///
+/// static mut ECHO:  EchoModule  = EchoModule { echo: false };
+/// static mut RESET: ResetModule = ResetModule;
+///
+/// at_modules! {
+///     SIZE;
+///     "AT+ECHO" => ECHO,
+///     "AT+RST"  => RESET,
+/// }
+///
+/// // COMMANDS is now available in scope:
+/// // parser.set_commands(COMMANDS);
+/// ```
+///
+/// # Example — single handler
+///
+/// ```rust,no_run
+/// use at_parser_rs::at_modules;
+/// use at_parser_rs::context::AtContext;
+/// use at_parser_rs::{AtResult};
+/// use osal_rs::utils::Bytes;
+///
+/// const SIZE: usize = 32;
+///
+/// struct PingModule;
+/// impl AtContext<SIZE> for PingModule {
+///     fn execute(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("PONG")) }
+/// }
+///
+/// static mut PING: PingModule = PingModule;
+///
+/// at_modules! {
+///     SIZE;
+///     "AT+PING" => PING,
+/// }
+/// ```
+///
+/// # Recommended alternative
+///
+/// For multi-type handler tables or when `static mut` is undesirable, prefer the
+/// explicit slice approach — it requires no `unsafe` at the call site and allows
+/// mixing handler types via trait objects:
+///
+/// ```rust,no_run
+/// use at_parser_rs::context::AtContext;
+///
+/// const SIZE: usize = 64;
+///
+/// let mut echo  = EchoModule  { echo: false };
+/// let mut reset = ResetModule;
+///
+/// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
+///     ("AT+ECHO", &mut echo),
+///     ("AT+RST",  &mut reset),
+/// ];
+/// parser.set_commands(commands);
+/// ```
 #[macro_export]
 macro_rules! at_modules {
     (
