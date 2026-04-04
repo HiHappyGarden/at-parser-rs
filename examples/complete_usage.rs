@@ -41,7 +41,7 @@ pub struct EchoModule {
 
 impl AtContext<SIZE> for EchoModule {
     /// Execute: return current echo state
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         if self.echo {
             Ok(Bytes::from_str("ECHO: ON"))
         } else {
@@ -50,7 +50,7 @@ impl AtContext<SIZE> for EchoModule {
     }
 
     /// Query: return current echo value
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         if self.echo {
             Ok(Bytes::from_str("1"))
         } else {
@@ -59,12 +59,12 @@ impl AtContext<SIZE> for EchoModule {
     }
 
     /// Test: show valid values
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
     }
 
     /// Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
         match value {
             "0" => {
@@ -85,12 +85,12 @@ pub struct ResetModule;
 
 impl AtContext<SIZE> for ResetModule {
     /// Execute: perform reset
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("OK - System reset"))
     }
 
     /// Test: show command description
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Reset the system"))
     }
 }
@@ -102,12 +102,12 @@ pub struct InfoModule {
 
 impl AtContext<SIZE> for InfoModule {
     /// Execute: return system info
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str(self.version))
     }
 
     /// Query: return detailed info
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("AT-Parser-RS v1.0.0 - AT Command Parser Library"))
     }
 }
@@ -120,7 +120,7 @@ pub struct LedModule {
 
 impl AtContext<SIZE> for LedModule {
     /// Execute: return current LED state
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         if self.state {
             Ok(Bytes::from_str("LED: ON"))
         } else {
@@ -129,7 +129,7 @@ impl AtContext<SIZE> for LedModule {
     }
 
     /// Query: return state and brightness
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         if self.state {
             Ok(Bytes::from_str("1,100"))
         } else {
@@ -138,12 +138,12 @@ impl AtContext<SIZE> for LedModule {
     }
 
     /// Test: show usage
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("AT+LED=<state>,<brightness> where state: 0|1, brightness: 0-100"))
     }
 
     /// Set: change LED state and brightness
-    fn set(&mut self, args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let state_str = args.get(0).ok_or(AtError::InvalidArgs)?;
         
         self.state = match state_str {

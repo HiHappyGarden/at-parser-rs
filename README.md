@@ -63,26 +63,30 @@ The main trait for implementing command handlers. The const generic `SIZE` defin
 
 ```rust
 pub trait AtContext<const SIZE: usize> {
-    fn exec(&self) -> AtResult<SIZE>;
-    fn query(&mut self) -> AtResult<SIZE>;
-    fn test(&mut self) -> AtResult<SIZE>;
-    fn set(&mut self, args: Args) -> AtResult<SIZE>;
+    fn exec(&self) -> AtResult<'_, SIZE>;
+    fn query(&mut self) -> AtResult<'_, SIZE>;
+    fn test(&mut self) -> AtResult<'_, SIZE>;
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE>;
 }
 ```
 
 All methods return `Err(AtError::NotSupported)` by default.
 
-### `AtResult<SIZE>` and `AtError`
+### `AtResult<'a, SIZE>` and `AtError<'a>`
 
 ```rust
-pub type AtResult<const SIZE: usize> = Result<Bytes<SIZE>, AtError>;
+pub type AtResult<'a, const SIZE: usize> = Result<Bytes<SIZE>, AtError<'a>>;
 
-pub enum AtError {
-    UnknownCommand,   // Command not found
-    NotSupported,     // Operation not implemented
-    InvalidArgs,      // Invalid argument(s)
+pub enum AtError<'a> {
+    UnknownCommand,        // Command not found
+    NotSupported,          // Operation not implemented
+    InvalidArgs,           // Invalid argument(s)
+    Unhandled(&'a str),    // Error with a borrowed description
+    UnhandledOwned(String) // Error with an owned description
 }
 ```
+
+Use `Unhandled` when you have a static or borrowed string literal, and `UnhandledOwned` when you need to construct an error message dynamically at runtime.
 
 ### `Bytes<SIZE>`
 
@@ -138,7 +142,7 @@ pub struct EchoModule {
 
 impl AtContext<SIZE> for EchoModule {
     // Execute: return current echo state
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         if self.echo {
             Ok(Bytes::from_str("ECHO: ON"))
         } else {
@@ -147,12 +151,12 @@ impl AtContext<SIZE> for EchoModule {
     }
 
     // Query: return current echo value
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         if self.echo { Ok(Bytes::from_str("1")) } else { Ok(Bytes::from_str("0")) }
     }
 
     // Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let v = args.get(0).ok_or(AtError::InvalidArgs)?;
         match v {
             "0" => {
@@ -168,7 +172,7 @@ impl AtContext<SIZE> for EchoModule {
     }
 
     // Test: show valid values and usage
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
     }
 }
@@ -177,13 +181,13 @@ impl AtContext<SIZE> for EchoModule {
 pub struct ResetModule;
 
 impl AtContext<SIZE> for ResetModule {
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         // Trigger hardware reset
         // reset_system();
         Ok(Bytes::from_str("OK - System reset"))
     }
 
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Reset the system"))
     }
 }
@@ -283,12 +287,12 @@ pub struct UartModule {
 
 impl AtContext<SIZE> for UartModule {
     // Query: return current configuration
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("115200,8"))
     }
 
     // Set: configure UART
-    fn set(&mut self, args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let baudrate = args.get(0)
             .ok_or(AtError::InvalidArgs)?
             .parse::<u32>()
@@ -313,7 +317,7 @@ impl AtContext<SIZE> for UartModule {
     }
 
     // Test: show valid configurations and usage
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("AT+UART=<baudrate>,<data_bits> where baudrate: 9600-115200, data_bits: 7|8"))
     }
 }
@@ -331,7 +335,7 @@ parser.execute("AT+UART?");         // "115200,8"
 The `Args` structure provides a simple interface for accessing comma-separated arguments:
 
 ```rust
-fn set(&mut self, args: Args) -> AtResult<SIZE> {
+fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
     let arg0 = args.get(0).ok_or(AtError::InvalidArgs)?;
     let arg1 = args.get(1).ok_or(AtError::InvalidArgs)?;
     let arg2 = args.get(2); // Optional argument
@@ -426,7 +430,7 @@ This approach is safer, more flexible, and works in all contexts (stack, heap, R
 
 1. **Choose an appropriate `SIZE`**: Pick a buffer size that fits your largest response string; responses longer than `SIZE` are silently truncated
 2. **Validate arguments**: Always check argument count and validity before processing
-3. **Handle errors gracefully**: Use appropriate `AtError` variants for different failure modes
+3. **Handle errors gracefully**: Use appropriate `AtError` variants for different failure modes. Use `AtError::Unhandled("msg")` for static string descriptions and `AtError::UnhandledOwned(string)` for dynamically constructed messages
 4. **Document test responses**: Use `test()` to provide clear usage information
 5. **Minimize state**: Keep module state simple and thread-safe
 

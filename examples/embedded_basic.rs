@@ -38,7 +38,7 @@ use at_parser_rs::{Args, AtError, AtResult, Bytes};
 const SIZE: usize = 64;
 
 // Example function using Args in no_std
-fn parse_args_example() -> AtResult<SIZE> {
+fn parse_args_example() -> AtResult<'static, SIZE> {
     let args = Args { raw: "foo,bar,baz" };
     match args.get(1) {
         Some(val) => Ok(Bytes::from_str(val)),

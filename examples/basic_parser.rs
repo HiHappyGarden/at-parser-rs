@@ -41,11 +41,11 @@ pub struct TestCommand {
 }
 
 impl AtContext<SIZE> for TestCommand {
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Test command executed"))
     }
 
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         if self.value == 0 {
             Ok(Bytes::from_str("0"))
         } else if self.value < 10 {
@@ -55,11 +55,11 @@ impl AtContext<SIZE> for TestCommand {
         }
     }
 
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Test: 0-100"))
     }
 
-    fn set(&mut self, args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let val_str = args.get(0).ok_or(AtError::InvalidArgs)?;
         self.value = val_str.parse().map_err(|_| AtError::InvalidArgs)?;
         Ok(Bytes::from_str("OK"))

@@ -49,7 +49,7 @@ dummy_at_modules! {
 }
 
 // Function that simulates AT command handling
-fn handle_at_command<'a>(cmd: &str, args: &'a str) -> Result<&'a str, AtError> {
+fn handle_at_command<'a>(cmd: &str, args: &'a str) -> Result<&'a str, AtError<'a>> {
     match cmd {
         "CMD1" => {
             let a = Args { raw: args };
