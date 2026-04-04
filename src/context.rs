@@ -29,7 +29,7 @@ pub trait AtContext<const SIZE: usize> {
 
     /// Execute command (AT+CMD)
     /// This is called when a command is invoked without any suffix.
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         Err(AtError::NotSupported)
     }
 
