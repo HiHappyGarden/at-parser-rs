@@ -115,7 +115,7 @@ where
     /// # Returns
     /// * `Ok(Bytes<SIZE>)` - Success response from the command handler
     /// * `Err(AtError)` - Error if parsing fails or command is not found
-    pub fn execute(&mut self, input: &str) -> AtResult<SIZE> {
+    pub fn execute<'b>(&'b mut self, input: &'b str) -> AtResult<'b, SIZE> {
         let input = input.trim();
         let (name, form) = parse(input)?;
 
@@ -142,7 +142,7 @@ where
 /// 
 /// # Returns
 /// A tuple of (command_name, command_form)
-fn parse<'a>(input: &'a str) -> Result<(&'a str, AtForm<'a>), AtError> {
+fn parse<'a>(input: &'a str) -> Result<(&'a str, AtForm<'a>), AtError<'a>> {
     let input = input.trim();
 
     // Check suffixes to determine command form

@@ -101,6 +101,7 @@ use core::iter::Iterator;
 use core::option::Option;
 use core::result::Result;
 
+use alloc::string::String;
 use osal_rs::utils::Bytes;
 
 pub mod context;
@@ -109,18 +110,22 @@ pub mod parser;
 
 /// Error types that can occur during AT command processing
 #[derive(Debug)]
-pub enum AtError {
+pub enum AtError<'a> {
     /// The command is not recognized
     UnknownCommand,
     /// The command is recognized but not supported
     NotSupported,
     /// The command arguments are invalid
     InvalidArgs,
+    /// Unhandled error with description
+    Unhandled(&'a str),
+    /// Unhandled error with description owned
+    UnhandledOwned(String)
 }
 
 /// Result type for AT command operations
 /// Returns either a `Bytes<SIZE>` response buffer or an `AtError`
-pub type AtResult<const SIZE: usize> = Result<Bytes<SIZE>, AtError>;
+pub type AtResult<'a, const SIZE: usize> = Result<Bytes<SIZE>, AtError<'a>>;
 
 /// Structure holding the arguments passed to an AT command
 pub struct Args<'a> {
@@ -182,6 +187,51 @@ impl<'a> Args<'a> {
 /// ];
 /// parser.set_commands(commands);
 /// ```
+/// Macro to format an AT response with 1–6 comma-separated parameters.
+///
+/// # Syntax
+///
+/// ```rust,ignore
+/// at_response!(SIZE, AT_RESP; arg1, arg2, ..., arg6)
+/// ```
+///
+/// - `SIZE` — const usize for the response buffer capacity
+/// - `AT_RESP` — the AT response prefix string
+/// - `arg1..arg6` — values to append, comma-separated
+#[macro_export]
+macro_rules! at_response {
+    ($size:expr, $at_resp:expr; $a1:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{}", $at_resp, $a1));
+        response
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{},{}", $at_resp, $a1, $a2));
+        response
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{},{},{}", $at_resp, $a1, $a2, $a3));
+        response
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4));
+        response
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{},{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4, $a5));
+        response
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr, $a6:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}{},{},{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4, $a5, $a6));
+        response
+    }};
+}
+
 #[macro_export]
 macro_rules! at_modules {
     (
