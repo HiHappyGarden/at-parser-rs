@@ -101,6 +101,7 @@ use core::iter::Iterator;
 use core::option::Option;
 use core::result::Result;
 
+use alloc::string::String;
 use osal_rs::utils::Bytes;
 
 pub mod context;
@@ -109,18 +110,22 @@ pub mod parser;
 
 /// Error types that can occur during AT command processing
 #[derive(Debug)]
-pub enum AtError {
+pub enum AtError<'a> {
     /// The command is not recognized
     UnknownCommand,
     /// The command is recognized but not supported
     NotSupported,
     /// The command arguments are invalid
     InvalidArgs,
+    /// Unhandled error with description
+    Unhandled(&'a str),
+    /// Unhandled error with description owned
+    UnhandledOwned(String)
 }
 
 /// Result type for AT command operations
 /// Returns either a `Bytes<SIZE>` response buffer or an `AtError`
-pub type AtResult<const SIZE: usize> = Result<Bytes<SIZE>, AtError>;
+pub type AtResult<'a, const SIZE: usize> = Result<Bytes<SIZE>, AtError<'a>>;
 
 /// Structure holding the arguments passed to an AT command
 pub struct Args<'a> {

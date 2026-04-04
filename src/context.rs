@@ -29,25 +29,25 @@ pub trait AtContext<const SIZE: usize> {
 
     /// Execute command (AT+CMD)
     /// This is called when a command is invoked without any suffix.
-    fn exec(&self) -> AtResult<SIZE> {
+    fn exec(&self) -> AtResult<'_, SIZE> {
         Err(AtError::NotSupported)
     }
 
     /// Query command (AT+CMD?)
     /// This is called to retrieve the current value/state of a command.
-    fn query(&mut self) -> AtResult<SIZE> {
+    fn query(&mut self) -> AtResult<'_, SIZE> {
         Err(AtError::NotSupported)
     }
     
     /// Test command (AT+CMD=?)
     /// This is called to check if a command is supported or to get valid parameter ranges.
-    fn test(&mut self) -> AtResult<SIZE> {
+    fn test(&mut self) -> AtResult<'_, SIZE> {
         Err(AtError::NotSupported)
     }
 
     /// Set command (AT+CMD=args)
     /// This is called to set parameters for a command.
-    fn set(&mut self, _args: Args) -> AtResult<SIZE> {
+    fn set(&mut self, _args: Args) -> AtResult<'_, SIZE> {
         Err(AtError::NotSupported)
     }
 
