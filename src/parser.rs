@@ -97,24 +97,139 @@ impl<'a, T, const SIZE: usize> AtParser<'a, T, SIZE>
 where
     T: AtContext<SIZE> + ?Sized {
 
-    /// Create a new empty parser
+    /// Create a new empty parser with no registered commands.
+    ///
+    /// Call [`set_commands`](AtParser::set_commands) before dispatching any
+    /// input with [`execute`](AtParser::execute).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use at_parser_rs::parser::AtParser;
+    /// # use at_parser_rs::context::AtContext;
+    /// # const SIZE: usize = 64;
+    /// # struct MyHandler; impl AtContext<SIZE> for MyHandler {}
+    /// let mut parser: AtParser<MyHandler, SIZE> = AtParser::new();
+    /// // parser has no commands yet; execute() will return Err(UnknownCommand)
+    /// ```
     pub const fn new() -> Self {
         Self { commands: & mut [] }
     }
 
-    /// Register commands that this parser will handle
+    /// Register the commands that this parser will dispatch.
+    ///
+    /// The slice maps each AT command name to a mutable reference to its
+    /// handler.  Command names are matched verbatim and case-sensitively
+    /// against the prefix of the input string (before any suffix such as
+    /// `?`, `=?`, or `=<args>`).
+    ///
+    /// # Arguments
+    ///
+    /// * `commands` — mutable slice of `(&'static str, &mut T)` pairs
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use at_parser_rs::parser::AtParser;
+    /// # use at_parser_rs::context::AtContext;
+    /// # use at_parser_rs::{AtResult, AtError};
+    /// # use osal_rs::utils::Bytes;
+    /// # const SIZE: usize = 64;
+    /// struct PingModule;
+    /// impl AtContext<SIZE> for PingModule {
+    ///     fn exec(&mut self) -> AtResult<'_, SIZE> { Ok(Bytes::from_str("PONG")) }
+    /// }
+    ///
+    /// let mut ping = PingModule;
+    /// let mut parser: AtParser<PingModule, SIZE> = AtParser::new();
+    ///
+    /// let commands: &mut [(&str, &mut PingModule)] = &mut [
+    ///     ("AT+PING", &mut ping),
+    /// ];
+    /// parser.set_commands(commands);
+    /// ```
+    ///
+    /// Using trait objects to mix different handler types:
+    ///
+    /// ```rust,no_run
+    /// # use at_parser_rs::parser::AtParser;
+    /// # use at_parser_rs::context::AtContext;
+    /// # use at_parser_rs::{AtResult, AtError};
+    /// # use osal_rs::utils::Bytes;
+    /// # const SIZE: usize = 64;
+    /// # struct PingModule; impl AtContext<SIZE> for PingModule {}
+    /// # struct EchoModule; impl AtContext<SIZE> for EchoModule {}
+    /// let mut ping = PingModule;
+    /// let mut echo = EchoModule;
+    /// let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
+    ///
+    /// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
+    ///     ("AT+PING", &mut ping),
+    ///     ("AT+ECHO", &mut echo),
+    /// ];
+    /// parser.set_commands(commands);
+    /// ```
     pub fn set_commands(&mut self, commands: &'a mut [(&'static str, &'a mut T)]) {
         self.commands = commands;
     }
 
-    /// Parse and execute an AT command string
-    /// 
+    /// Parse and execute an AT command string.
+    ///
+    /// Leading and trailing whitespace is stripped before parsing.
+    /// The command name is matched against the registered commands; if found,
+    /// the appropriate handler method is called based on the command form
+    /// detected from the suffix.
+    ///
+    /// | Input suffix | Dispatches to |
+    /// |---|---|
+    /// | *(none)* | [`exec`](crate::context::AtContext::exec) |
+    /// | `?` | [`query`](crate::context::AtContext::query) |
+    /// | `=?` | [`test`](crate::context::AtContext::test) |
+    /// | `=<args>` | [`set`](crate::context::AtContext::set) |
+    ///
     /// # Arguments
-    /// * `input` - The raw AT command string (e.g., "AT+CMD?")
-    /// 
+    ///
+    /// * `input` — raw AT command string (e.g. `"AT+CMD?"`, `"AT+CMD=1,2"`)
+    ///
     /// # Returns
-    /// * `Ok(Bytes<SIZE>)` - Success response from the command handler
-    /// * `Err(AtError)` - Error if parsing fails or command is not found
+    ///
+    /// * `Ok(Bytes<SIZE>)` — response buffer returned by the matched handler
+    /// * `Err(AtError::UnknownCommand)` — no handler found for the command name
+    /// * `Err(AtError::NotSupported)` — handler found but the requested form is not implemented
+    /// * `Err(AtError::InvalidArgs)` — handler returned an argument error
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use at_parser_rs::parser::AtParser;
+    /// # use at_parser_rs::context::AtContext;
+    /// # use at_parser_rs::{Args, AtResult, AtError};
+    /// # use osal_rs::utils::Bytes;
+    /// # const SIZE: usize = 64;
+    /// struct EchoModule { enabled: bool }
+    /// impl AtContext<SIZE> for EchoModule {
+    ///     fn query(&mut self) -> AtResult<'_, SIZE> {
+    ///         Ok(Bytes::from_str(if self.enabled { "1" } else { "0" }))
+    ///     }
+    ///     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
+    ///         match args.get(0) {
+    ///             Some("0") => { self.enabled = false; Ok(Bytes::from_str("OK")) }
+    ///             Some("1") => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
+    ///             _ => Err(AtError::InvalidArgs),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let mut echo = EchoModule { enabled: false };
+    /// let mut parser: AtParser<EchoModule, SIZE> = AtParser::new();
+    /// let commands: &mut [(&str, &mut EchoModule)] = &mut [("AT+ECHO", &mut echo)];
+    /// parser.set_commands(commands);
+    ///
+    /// assert!(parser.execute("AT+ECHO=1").is_ok());   // sets echo on
+    /// assert!(parser.execute("AT+ECHO?").is_ok());    // queries state
+    /// assert!(parser.execute("AT+UNKNOWN").is_err()); // Err(UnknownCommand)
+    /// assert!(parser.execute("AT+ECHO=9").is_err());  // Err(InvalidArgs)
+    /// ```
     pub fn execute<'b>(&'b mut self, input: &'b str) -> AtResult<'b, SIZE> {
         let input = input.trim();
         let (name, form) = parse(input)?;
@@ -135,13 +250,30 @@ where
     }
 }
 
-/// Parse an AT command string into its name and form
-/// 
+/// Parse an AT command string into its name and form.
+///
+/// Examines the suffix of `input` (after trimming whitespace) to determine
+/// which AT command form was requested, then returns the bare command name
+/// together with the detected [`AtForm`].
+///
+/// | Suffix | Resulting form |
+/// |---|---|
+/// | `=?` | [`AtForm::Test`] |
+/// | `?` | [`AtForm::Query`] |
+/// | `=<args>` | [`AtForm::Set`] with the text after `=` as raw args |
+/// | *(none)* | [`AtForm::Exec`] |
+///
+/// This function never returns an error; every well-formed AT command string
+/// maps to exactly one form.
+///
 /// # Arguments
-/// * `input` - The command string to parse
-/// 
+///
+/// * `input` — pre-trimmed AT command string (trimming is reapplied internally)
+///
 /// # Returns
-/// A tuple of (command_name, command_form)
+///
+/// `Ok((command_name, form))` where `command_name` is a slice of `input`
+/// with the suffix removed.
 fn parse<'a>(input: &'a str) -> Result<(&'a str, AtForm<'a>), AtError<'a>> {
     let input = input.trim();
 

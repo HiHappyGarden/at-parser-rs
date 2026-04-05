@@ -145,7 +145,7 @@ impl<'a> Args<'a> {
 /// Wraps a value in double-quote characters (`"`).
 ///
 /// Expands to a string literal `"\"<value>\""` suitable for use inside
-/// [`at_response!`] or [`at_cmd_response!`] arguments when the protocol
+/// [`at_response!`] arguments when the protocol
 /// requires quoted strings.
 ///
 /// # Syntax
@@ -182,15 +182,51 @@ macro_rules! at_quoted {
 
 /// Macro to format an AT response with 1–6 comma-separated parameters.
 ///
+/// Constructs an [`osal_rs::utils::Bytes`] buffer by formatting the given
+/// prefix string (`AT_RESP`) followed by the arguments separated by commas.
+///
 /// # Syntax
 ///
 /// ```rust,ignore
 /// at_response!(SIZE, AT_RESP; arg1, arg2, ..., arg6)
 /// ```
 ///
-/// - `SIZE` — const usize for the response buffer capacity
-/// - `AT_RESP` — the AT response prefix string
-/// - `arg1..arg6` — values to append, comma-separated
+/// - `SIZE` — `const usize` for the response buffer capacity (must match the
+///   capacity used by the surrounding [`AtContext`](crate::context::AtContext) impl)
+/// - `AT_RESP` — the AT response prefix string literal (e.g. `"+ECHO: "`)
+/// - `arg1..arg6` — values to append, comma-separated; any type implementing
+///   [`core::fmt::Display`] is accepted, including [`at_quoted!`] expressions
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use at_parser_rs::at_response;
+///
+/// const SIZE: usize = 64;
+///
+/// // Single boolean argument
+/// let resp = at_response!(SIZE, "+ECHO: "; 1u8);
+/// // buffer: "+ECHO: 1"
+///
+/// // Two arguments (state and brightness)
+/// let resp = at_response!(SIZE, "+LED: "; 1u8, 75u8);
+/// // buffer: "+LED: 1,75"
+///
+/// // Three arguments
+/// let resp = at_response!(SIZE, "+NET: "; "192.168.1.1", 8080u16, 1u8);
+/// // buffer: "+NET: 192.168.1.1,8080,1"
+/// ```
+///
+/// Using [`at_quoted!`] inside the response:
+///
+/// ```rust,no_run
+/// use at_parser_rs::{at_response, at_quoted};
+///
+/// const SIZE: usize = 64;
+/// let ssid = "MyNetwork";
+/// let resp = at_response!(SIZE, "+WIFI: "; at_quoted!(ssid), -70i8);
+/// // buffer: +WIFI: "MyNetwork",-70
+/// ```
 #[macro_export]
 macro_rules! at_response {
     ($size:expr, $at_resp:expr; $a1:expr) => {{
@@ -290,7 +326,7 @@ macro_rules! at_response {
 ///
 /// struct ResetModule;
 /// impl AtContext<SIZE> for ResetModule {
-///     fn execute(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("OK")) }
+///     fn exec(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("OK")) }
 /// }
 ///
 /// static mut ECHO:  EchoModule  = EchoModule { echo: false };
@@ -318,7 +354,7 @@ macro_rules! at_response {
 ///
 /// struct PingModule;
 /// impl AtContext<SIZE> for PingModule {
-///     fn execute(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("PONG")) }
+///     fn exec(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("PONG")) }
 /// }
 ///
 /// static mut PING: PingModule = PingModule;
