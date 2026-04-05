@@ -41,7 +41,7 @@ pub struct EchoModule {
 
 impl AtContext<SIZE> for EchoModule {
     /// Execute: return current echo state
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         if self.echo {
             Ok(Bytes::from_str("ECHO: ON"))
         } else {
@@ -85,7 +85,7 @@ pub struct ResetModule;
 
 impl AtContext<SIZE> for ResetModule {
     /// Execute: perform reset
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("OK - System reset"))
     }
 
@@ -102,7 +102,7 @@ pub struct InfoModule {
 
 impl AtContext<SIZE> for InfoModule {
     /// Execute: return system info
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str(self.version))
     }
 
@@ -120,7 +120,7 @@ pub struct LedModule {
 
 impl AtContext<SIZE> for LedModule {
     /// Execute: return current LED state
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         if self.state {
             Ok(Bytes::from_str("LED: ON"))
         } else {

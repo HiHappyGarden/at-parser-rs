@@ -41,7 +41,7 @@ pub struct TestCommand {
 }
 
 impl AtContext<SIZE> for TestCommand {
-    fn exec(&self) -> AtResult<'_, SIZE> {
+    fn exec(&mut self) -> AtResult<'_, SIZE> {
         Ok(Bytes::from_str("Test command executed"))
     }
 
