@@ -33,7 +33,8 @@
 
 extern crate at_parser_rs;
 
-use at_parser_rs::{Args, AtError, AtResult, Bytes};
+use at_parser_rs::{Args, AtError, AtResult};
+use osal_rs::utils::Bytes;
 
 const SIZE: usize = 64;
 
@@ -41,7 +42,7 @@ const SIZE: usize = 64;
 fn parse_args_example() -> AtResult<'static, SIZE> {
     let args = Args { raw: "foo,bar,baz" };
     match args.get(1) {
-        Some(val) => Ok(Bytes::from_str(val)),
+        Some(val) => Ok(Bytes::from_str(val.as_ref())),
         None => Err(AtError::InvalidArgs),
     }
 }

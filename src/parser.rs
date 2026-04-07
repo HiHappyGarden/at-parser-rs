@@ -212,9 +212,10 @@ where
     ///         Ok(Bytes::from_str(if self.enabled { "1" } else { "0" }))
     ///     }
     ///     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-    ///         match args.get(0) {
-    ///             Some("0") => { self.enabled = false; Ok(Bytes::from_str("OK")) }
-    ///             Some("1") => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
+    ///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+    ///         match value.as_ref() {
+    ///             "0" => { self.enabled = false; Ok(Bytes::from_str("OK")) }
+    ///             "1" => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
     ///             _ => Err(AtError::InvalidArgs),
     ///         }
     ///     }

@@ -44,7 +44,8 @@
 //! ```rust,no_run
 //! use at_parser_rs::context::AtContext;
 //! use at_parser_rs::parser::AtParser;
-//! use at_parser_rs::{Args, AtResult, AtError, Bytes};
+//! use at_parser_rs::{Args, AtResult, AtError};
+//! use osal_rs::utils::Bytes;
 //!
 //! const SIZE: usize = 64;
 //!
@@ -57,9 +58,10 @@
 //!     }
 //!     
 //!     fn set(&mut self, args: Args) -> AtResult<SIZE> {
-//!         match args.get(0) {
-//!             Some("0") => { self.echo = false; Ok(Bytes::from_str("OK")) }
-//!             Some("1") => { self.echo = true; Ok(Bytes::from_str("OK")) }
+//!         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+//!         match value.as_ref() {
+//!             "0" => { self.echo = false; Ok(Bytes::from_str("OK")) }
+//!             "1" => { self.echo = true; Ok(Bytes::from_str("OK")) }
 //!             _ => Err(AtError::InvalidArgs),
 //!         }
 //!     }
@@ -97,10 +99,10 @@
 extern crate alloc;
 extern crate osal_rs;
 
-use core::iter::Iterator;
 use core::option::Option;
 use core::result::Result;
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use osal_rs::utils::Bytes;
 
@@ -135,9 +137,161 @@ pub struct Args<'a> {
 
 impl<'a> Args<'a> {
     /// Get an argument by index (0-based)
-    /// Arguments are separated by commas
-    pub fn get(&self, index: usize) -> Option<&'a str> {
-        self.raw.split(',').nth(index)
+    /// Arguments are separated by commas, except when they are inside
+    /// double-quoted strings.
+    ///
+    /// When an argument is wrapped in double quotes, the outer quotes are
+    /// removed from the returned value and escaped quotes (`\"`) are
+    /// decoded to `"`.
+    pub fn get(&self, index: usize) -> Option<Cow<'a, str>> {
+        let (arg, quoted) = self.find(index)?;
+
+        if quoted {
+            Some(Self::decode_quoted(arg))
+        } else {
+            Some(Cow::Borrowed(arg))
+        }
+    }
+
+    /// Get an argument by index without decoding escape sequences.
+    ///
+    /// Quoted arguments are still returned without the surrounding quotes.
+    pub fn get_raw(&self, index: usize) -> Option<&'a str> {
+        self.find(index).map(|(arg, _)| arg)
+    }
+
+    /// Backward-compatible alias for [`Args::get`].
+    pub fn get_string(&self, index: usize) -> Option<Cow<'a, str>> {
+        self.get(index)
+    }
+
+    fn find(&self, index: usize) -> Option<(&'a str, bool)> {
+        let mut current_index = 0;
+        let mut start = 0;
+        let mut in_quotes = false;
+        let mut escaped = false;
+
+        for (offset, ch) in self.raw.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if in_quotes {
+                match ch {
+                    '\\' => escaped = true,
+                    '"' => in_quotes = false,
+                    _ => {}
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => in_quotes = true,
+                ',' => {
+                    if current_index == index {
+                        return Some(Self::normalize(&self.raw[start..offset]));
+                    }
+
+                    current_index += 1;
+                    start = offset + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        if current_index == index {
+            Some(Self::normalize(&self.raw[start..]))
+        } else {
+            None
+        }
+    }
+
+    fn normalize(arg: &'a str) -> (&'a str, bool) {
+        if let Some(inner) = arg.strip_prefix('"').and_then(|value| value.strip_suffix('"')) {
+            (inner, true)
+        } else {
+            (arg, false)
+        }
+    }
+
+    fn decode_quoted(arg: &'a str) -> Cow<'a, str> {
+        if !arg.contains('\\') {
+            return Cow::Borrowed(arg);
+        }
+
+        let mut decoded = String::new();
+        let mut escaped = false;
+
+        for ch in arg.chars() {
+            if escaped {
+                match ch {
+                    '"' | '\\' => decoded.push(ch),
+                    _ => {
+                        decoded.push('\\');
+                        decoded.push(ch);
+                    }
+                }
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+
+            decoded.push(ch);
+        }
+
+        if escaped {
+            decoded.push('\\');
+        }
+
+        Cow::Owned(decoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+
+    #[test]
+    fn get_splits_plain_arguments() {
+        let args = Args { raw: "foo,bar,baz" };
+
+        assert_eq!(args.get(0).as_deref(), Some("foo"));
+        assert_eq!(args.get(1).as_deref(), Some("bar"));
+        assert_eq!(args.get(2).as_deref(), Some("baz"));
+        assert_eq!(args.get(3), None);
+    }
+
+    #[test]
+    fn get_keeps_commas_inside_quoted_arguments() {
+        let args = Args { raw: "i,\"ciao, sono antonio\",secret" };
+
+        assert_eq!(args.get(0).as_deref(), Some("i"));
+        assert_eq!(args.get(1).as_deref(), Some("ciao, sono antonio"));
+        assert_eq!(args.get(2).as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn get_decodes_escaped_quotes() {
+        let args = Args { raw: r#"i,"ciao, sono \"antonio\"",mysecretpassword"# };
+
+        assert_eq!(args.get_raw(1), Some(r#"ciao, sono \"antonio\""#));
+        assert_eq!(args.get(1).as_deref(), Some("ciao, sono \"antonio\""));
+        assert_eq!(args.get(2).as_deref(), Some("mysecretpassword"));
+    }
+
+    #[test]
+    fn get_handles_empty_arguments() {
+        let args = Args { raw: "first,,\"\",last" };
+
+        assert_eq!(args.get(0).as_deref(), Some("first"));
+        assert_eq!(args.get(1).as_deref(), Some(""));
+        assert_eq!(args.get(2).as_deref(), Some(""));
+        assert_eq!(args.get(3).as_deref(), Some("last"));
     }
 }
 
@@ -316,9 +470,10 @@ macro_rules! at_response {
 ///         Ok(Bytes::from_str(if self.echo { "1" } else { "0" }))
 ///     }
 ///     fn set(&mut self, args: Args) -> AtResult<SIZE> {
-///         match args.get(0) {
-///             Some("0") => { self.echo = false; Ok(Bytes::from_str("OK")) }
-///             Some("1") => { self.echo = true;  Ok(Bytes::from_str("OK")) }
+///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+///         match value.as_ref() {
+///             "0" => { self.echo = false; Ok(Bytes::from_str("OK")) }
+///             "1" => { self.echo = true;  Ok(Bytes::from_str("OK")) }
 ///             _ => Err(AtError::InvalidArgs),
 ///         }
 ///     }

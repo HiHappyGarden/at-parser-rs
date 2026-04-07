@@ -30,7 +30,8 @@
 extern crate at_parser_rs;
 
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{Args, AtError, AtResult, Bytes};
+use at_parser_rs::{Args, AtError, AtResult};
+use osal_rs::utils::Bytes;
 
 const SIZE: usize = 64;
 
@@ -66,7 +67,7 @@ impl AtContext<SIZE> for EchoModule {
     /// Set: enable/disable echo
     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
-        match value {
+        match value.as_ref() {
             "0" => {
                 self.echo = false;
                 Ok(Bytes::from_str("ECHO OFF"))
@@ -146,7 +147,7 @@ impl AtContext<SIZE> for LedModule {
     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         let state_str = args.get(0).ok_or(AtError::InvalidArgs)?;
         
-        self.state = match state_str {
+        self.state = match state_str.as_ref() {
             "0" => false,
             "1" => true,
             _ => return Err(AtError::InvalidArgs),

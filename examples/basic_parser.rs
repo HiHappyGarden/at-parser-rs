@@ -31,7 +31,8 @@ extern crate at_parser_rs;
 
 use at_parser_rs::context::AtContext;
 use at_parser_rs::parser::AtParser;
-use at_parser_rs::{Args, AtError, AtResult, Bytes};
+use at_parser_rs::{Args, AtError, AtResult};
+use osal_rs::utils::Bytes;
 
 const SIZE: usize = 64;
 

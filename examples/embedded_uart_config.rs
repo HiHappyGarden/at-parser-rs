@@ -33,7 +33,8 @@
 
 extern crate at_parser_rs;
 
-use at_parser_rs::{Args, AtError, AtResult, Bytes};
+use at_parser_rs::{Args, AtError, AtResult};
+use osal_rs::utils::Bytes;
 use at_parser_rs::context::AtContext;
 
 const SIZE: usize = 64;
@@ -62,7 +63,7 @@ impl AtContext<SIZE> for DummyUart {
     }
     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
         if let Some(data) = args.get(0) {
-            self.write(data);
+            self.write(data.as_ref());
             Ok(Bytes::from_str("SENT"))
         } else {
             Err(AtError::InvalidArgs)

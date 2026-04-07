@@ -75,9 +75,10 @@ use crate::{Args, AtError, AtResult};
 ///         Ok(Bytes::from_str("(0,1)"))
 ///     }
 ///     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-///         match args.get(0) {
-///             Some("0") => { self.enabled = false; Ok(Bytes::from_str("OK")) }
-///             Some("1") => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
+///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+///         match value.as_ref() {
+///             "0" => { self.enabled = false; Ok(Bytes::from_str("OK")) }
+///             "1" => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
 ///             _ => Err(AtError::InvalidArgs),
 ///         }
 ///     }
@@ -180,7 +181,8 @@ pub trait AtContext<const SIZE: usize> {
     ///
     /// Called to configure the command with one or more parameters.
     /// Arguments are accessible via [`Args::get`](crate::Args::get) using a
-    /// 0-based comma-separated index.
+    /// 0-based comma-separated index. Quoted arguments are unquoted and
+    /// escape sequences such as `\"` are decoded automatically.
     ///
     /// # Arguments
     ///
