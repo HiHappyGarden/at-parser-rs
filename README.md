@@ -131,7 +131,8 @@ Implement the `AtContext<SIZE>` trait for your command handlers. Choose a buffer
 
 ```rust
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{AtResult, AtError, Args, Bytes};
+use at_parser_rs::{AtResult, AtError, Args};
+use osal_rs::utils::Bytes;
 
 const SIZE: usize = 64;
 
@@ -275,7 +276,8 @@ match parser.execute("AT+UNKNOWN") {
 ## Advanced Example: UART Module
 
 ```rust
-use at_parser_rs::{AtResult, AtError, Args, Bytes};
+use at_parser_rs::{AtResult, AtError, Args};
+use osal_rs::utils::Bytes;
 use at_parser_rs::context::AtContext;
 
 const SIZE: usize = 64;
@@ -332,7 +334,9 @@ parser.execute("AT+UART?");         // "115200,8"
 
 ## Parsing Arguments
 
-The `Args` structure provides a simple interface for accessing comma-separated arguments:
+The `Args` structure provides a simple interface for accessing comma-separated arguments.
+Quoted values are treated as a single argument, so commas inside `"..."` do not split the field.
+When a quoted argument contains `\"`, `Args::get()` returns the decoded `"` character:
 
 ```rust
 fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
@@ -346,10 +350,16 @@ fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
 ```
 
 **Important**: `Args::get()` uses 0-based indexing. For a command like `AT+CMD=foo,bar,baz`:
-- `args.get(0)` returns `Some("foo")`
-- `args.get(1)` returns `Some("bar")`
-- `args.get(2)` returns `Some("baz")`
+- `args.get(0).as_deref()` returns `Some("foo")`
+- `args.get(1).as_deref()` returns `Some("bar")`
+- `args.get(2).as_deref()` returns `Some("baz")`
 - `args.get(3)` returns `None`
+
+For a command like `AT+SESS=i,"ciao, sono \"antonio\"",mysecretpassword`:
+- `args.get(0).as_deref()` returns `Some("i")`
+- `args.get(1).as_deref()` returns `Some("ciao, sono \"antonio\"")`
+- `args.get_raw(1)` returns `Some("ciao, sono \\\"antonio\\\"")`
+- `args.get(2).as_deref()` returns `Some("mysecretpassword")`
 
 For numeric arguments:
 ```rust
@@ -357,6 +367,15 @@ let value = args.get(0)
     .ok_or(AtError::InvalidArgs)?
     .parse::<i32>()
     .map_err(|_| AtError::InvalidArgs)?;
+```
+
+Use `Args::get_raw()` only when you explicitly need the original escaped content from a quoted argument:
+
+```rust
+let name = args.get(1)
+    .ok_or(AtError::InvalidArgs)?;
+
+assert_eq!(name.as_ref(), "ciao, sono \"antonio\"");
 ```
 
 ## Thread Safety
