@@ -89,8 +89,8 @@ enum AtForm<'a> {
 pub struct AtParser<'a, T, const SIZE: usize>
 where
     T: AtContext<SIZE> + ?Sized {
-    /// Array of registered commands with their name and handler
-    pub commands: &'a mut [(&'static str, &'a mut T)],
+    /// Array of registered commands with their command, AT response prefix, and handler
+    pub commands: &'a mut [(&'static str, &'static str, &'a mut T)],
 }
 
 impl<'a, T, const SIZE: usize> AtParser<'a, T, SIZE>
@@ -125,7 +125,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `commands` — mutable slice of `(&'static str, &mut T)` pairs
+    /// * `commands` — mutable slice of `(&'static str, &'static str, &mut T)` triples
     ///
     /// # Example
     ///
@@ -143,8 +143,8 @@ where
     /// let mut ping = PingModule;
     /// let mut parser: AtParser<PingModule, SIZE> = AtParser::new();
     ///
-    /// let commands: &mut [(&str, &mut PingModule)] = &mut [
-    ///     ("AT+PING", &mut ping),
+    /// let commands: &mut [(&str, &str, &mut PingModule)] = &mut [
+    ///     ("AT+PING", "+PONG", &mut ping),
     /// ];
     /// parser.set_commands(commands);
     /// ```
@@ -163,13 +163,13 @@ where
     /// let mut echo = EchoModule;
     /// let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
     ///
-    /// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-    ///     ("AT+PING", &mut ping),
-    ///     ("AT+ECHO", &mut echo),
+    /// let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+    ///     ("AT+PING", "+PONG", &mut ping),
+    ///     ("AT+ECHO", "+ECHO", &mut echo),
     /// ];
     /// parser.set_commands(commands);
     /// ```
-    pub fn set_commands(&mut self, commands: &'a mut [(&'static str, &'a mut T)]) {
+    pub fn set_commands(&mut self, commands: &'a mut [(&'static str, &'static str, &'a mut T)]) {
         self.commands = commands;
     }
 
@@ -211,7 +211,7 @@ where
     ///     fn query(&mut self) -> AtResult<'_, SIZE> {
     ///         Ok(Bytes::from_str(if self.enabled { "1" } else { "0" }))
     ///     }
-    ///     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
+    ///     fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
     ///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
     ///         match value.as_ref() {
     ///             "0" => { self.enabled = false; Ok(Bytes::from_str("OK")) }
@@ -223,7 +223,7 @@ where
     ///
     /// let mut echo = EchoModule { enabled: false };
     /// let mut parser: AtParser<EchoModule, SIZE> = AtParser::new();
-    /// let commands: &mut [(&str, &mut EchoModule)] = &mut [("AT+ECHO", &mut echo)];
+    /// let commands: &mut [(&str, &str, &mut EchoModule)] = &mut [("AT+ECHO", "+ECHO", &mut echo)];
     /// parser.set_commands(commands);
     ///
     /// assert!(parser.execute("AT+ECHO=1").is_ok());   // sets echo on
@@ -233,20 +233,20 @@ where
     /// ```
     pub fn execute<'b>(&'b mut self, input: &'b str) -> AtResult<'b, SIZE> {
         let input = input.trim();
-        let (name, form) = parse(input)?;
+        let (name, form) = parse(input).map_err(|e| ("", e))?;
 
         // Find the command handler
-        let (_, module) = self.commands
+        let (_, at_response, module) = self.commands
             .iter_mut()
-            .find(|(n, _)| *n == name)
-            .ok_or(AtError::UnknownCommand)?;
+            .find(|(n, _, _)| *n == name)
+            .ok_or(("", AtError::UnknownCommand))?;
 
         // Dispatch to the appropriate handler method
         match form {
-            AtForm::Exec => module.exec(),
-            AtForm::Query => module.query(),
-            AtForm::Test => module.test(),
-            AtForm::Set(args) => module.set(args),
+            AtForm::Exec => module.exec(at_response),
+            AtForm::Query => module.query(at_response),
+            AtForm::Test => module.test(at_response),
+            AtForm::Set(args) => module.set(at_response, args),
         }
     }
 }

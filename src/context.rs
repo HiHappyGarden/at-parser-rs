@@ -112,8 +112,8 @@ pub trait AtContext<const SIZE: usize> {
     /// }
     /// // AT+PING  →  "PONG"
     /// ```
-    fn exec(&mut self) -> AtResult<'_, SIZE> {
-        Err(AtError::NotSupported)
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Err((at_response, AtError::NotSupported))
     }
 
     /// Query command (`AT+CMD?`)
@@ -143,8 +143,8 @@ pub trait AtContext<const SIZE: usize> {
     /// }
     /// // AT+VOL?  →  "75"  (if level == 75)
     /// ```
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        Err(AtError::NotSupported)
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Err((at_response, AtError::NotSupported))
     }
     
     /// Test command (`AT+CMD=?`)
@@ -173,8 +173,8 @@ pub trait AtContext<const SIZE: usize> {
     /// }
     /// // AT+VOL=?  →  "(0-100)"
     /// ```
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Err(AtError::NotSupported)
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Err((at_response, AtError::NotSupported))
     }
 
     /// Set command (`AT+CMD=<args>`)
@@ -205,7 +205,7 @@ pub trait AtContext<const SIZE: usize> {
     /// struct VolumeModule { level: u8 }
     ///
     /// impl AtContext<SIZE> for VolumeModule {
-    ///     fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
+    ///     fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
     ///         let val: u8 = args.get(0)
     ///             .ok_or(AtError::InvalidArgs)?
     ///             .parse()
@@ -219,8 +219,8 @@ pub trait AtContext<const SIZE: usize> {
     /// // AT+VOL=200  →  Err(InvalidArgs)
     /// // AT+VOL=     →  Err(InvalidArgs)
     /// ```
-    fn set(&mut self, _args: Args) -> AtResult<'_, SIZE> {
-        Err(AtError::NotSupported)
+    fn set(&mut self, at_response: &'static str, _args: Args) -> AtResult<'_, SIZE> {
+        Err((at_response, AtError::NotSupported))
     }
 
 }
