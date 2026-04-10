@@ -118,10 +118,13 @@ where
 
     /// Register the commands that this parser will dispatch.
     ///
-    /// The slice maps each AT command name to a mutable reference to its
-    /// handler.  Command names are matched verbatim and case-sensitively
-    /// against the prefix of the input string (before any suffix such as
-    /// `?`, `=?`, or `=<args>`).
+    /// The slice maps each AT command to a mutable reference to its handler via
+    /// **3-tuples**: `(at_command, at_response, handler)`.  
+    /// - `at_command` — the string matched verbatim against the input prefix (e.g. `"AT+ECHO"`)
+    /// - `at_response` — prefix forwarded to every handler method (e.g. `"+ECHO: "`)
+    /// - `handler` — mutable reference to the [`AtContext`] implementation
+    ///
+    /// Matching is case-sensitive.
     ///
     /// # Arguments
     ///
@@ -132,19 +135,20 @@ where
     /// ```rust,no_run
     /// # use at_parser_rs::parser::AtParser;
     /// # use at_parser_rs::context::AtContext;
-    /// # use at_parser_rs::{AtResult, AtError};
-    /// # use osal_rs::utils::Bytes;
+    /// # use at_parser_rs::{AtResult, at_response};
     /// # const SIZE: usize = 64;
     /// struct PingModule;
     /// impl AtContext<SIZE> for PingModule {
-    ///     fn exec(&mut self) -> AtResult<'_, SIZE> { Ok(Bytes::from_str("PONG")) }
+    ///     fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+    ///         Ok(at_response!(SIZE, at_response; "PONG"))
+    ///     }
     /// }
     ///
     /// let mut ping = PingModule;
     /// let mut parser: AtParser<PingModule, SIZE> = AtParser::new();
     ///
     /// let commands: &mut [(&str, &str, &mut PingModule)] = &mut [
-    ///     ("AT+PING", "+PONG", &mut ping),
+    ///     ("AT+PING", "+PING: ", &mut ping),
     /// ];
     /// parser.set_commands(commands);
     /// ```
@@ -154,8 +158,6 @@ where
     /// ```rust,no_run
     /// # use at_parser_rs::parser::AtParser;
     /// # use at_parser_rs::context::AtContext;
-    /// # use at_parser_rs::{AtResult, AtError};
-    /// # use osal_rs::utils::Bytes;
     /// # const SIZE: usize = 64;
     /// # struct PingModule; impl AtContext<SIZE> for PingModule {}
     /// # struct EchoModule; impl AtContext<SIZE> for EchoModule {}
@@ -164,8 +166,8 @@ where
     /// let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
     ///
     /// let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
-    ///     ("AT+PING", "+PONG", &mut ping),
-    ///     ("AT+ECHO", "+ECHO", &mut echo),
+    ///     ("AT+PING", "+PING: ", &mut ping),
+    ///     ("AT+ECHO", "+ECHO: ", &mut echo),
     /// ];
     /// parser.set_commands(commands);
     /// ```
@@ -203,33 +205,34 @@ where
     /// ```rust,no_run
     /// # use at_parser_rs::parser::AtParser;
     /// # use at_parser_rs::context::AtContext;
-    /// # use at_parser_rs::{Args, AtResult, AtError};
-    /// # use osal_rs::utils::Bytes;
+    /// # use at_parser_rs::{Args, AtResult, AtError, at_response};
     /// # const SIZE: usize = 64;
     /// struct EchoModule { enabled: bool }
     /// impl AtContext<SIZE> for EchoModule {
-    ///     fn query(&mut self) -> AtResult<'_, SIZE> {
-    ///         Ok(Bytes::from_str(if self.enabled { "1" } else { "0" }))
+    ///     fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+    ///         Ok(at_response!(SIZE, at_response; if self.enabled { 1u8 } else { 0u8 }))
     ///     }
     ///     fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
-    ///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+    ///         let value = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
     ///         match value.as_ref() {
-    ///             "0" => { self.enabled = false; Ok(Bytes::from_str("OK")) }
-    ///             "1" => { self.enabled = true;  Ok(Bytes::from_str("OK")) }
-    ///             _ => Err(AtError::InvalidArgs),
+    ///             "0" => { self.enabled = false; Ok(at_response!(SIZE, at_response; "OK")) }
+    ///             "1" => { self.enabled = true;  Ok(at_response!(SIZE, at_response; "OK")) }
+    ///             _ => Err((at_response, AtError::InvalidArgs)),
     ///         }
     ///     }
     /// }
     ///
     /// let mut echo = EchoModule { enabled: false };
     /// let mut parser: AtParser<EchoModule, SIZE> = AtParser::new();
-    /// let commands: &mut [(&str, &str, &mut EchoModule)] = &mut [("AT+ECHO", "+ECHO", &mut echo)];
+    /// let commands: &mut [(&str, &str, &mut EchoModule)] = &mut [
+    ///     ("AT+ECHO", "+ECHO: ", &mut echo)
+    /// ];
     /// parser.set_commands(commands);
     ///
-    /// assert!(parser.execute("AT+ECHO=1").is_ok());   // sets echo on
-    /// assert!(parser.execute("AT+ECHO?").is_ok());    // queries state
-    /// assert!(parser.execute("AT+UNKNOWN").is_err()); // Err(UnknownCommand)
-    /// assert!(parser.execute("AT+ECHO=9").is_err());  // Err(InvalidArgs)
+    /// assert!(parser.execute("AT+ECHO=1").is_ok());    // Ok(("+ECHO: ", "OK"))
+    /// assert!(parser.execute("AT+ECHO?").is_ok());     // Ok(("+ECHO: ", "1"))
+    /// assert!(parser.execute("AT+UNKNOWN").is_err());  // Err(("", UnknownCommand))
+    /// assert!(parser.execute("AT+ECHO=9").is_err());   // Err(("+ECHO: ", InvalidArgs))
     /// ```
     pub fn execute<'b>(&'b mut self, input: &'b str) -> AtResult<'b, SIZE> {
         let input = input.trim();

@@ -30,8 +30,8 @@
 extern crate at_parser_rs;
 
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{Args, AtError, AtResult};
-use osal_rs::utils::Bytes;
+use at_parser_rs::parser::AtParser;
+use at_parser_rs::{Args, AtError, AtResult, at_response};
 
 const SIZE: usize = 64;
 
@@ -42,41 +42,33 @@ pub struct EchoModule {
 
 impl AtContext<SIZE> for EchoModule {
     /// Execute: return current echo state
-    fn exec(&mut self) -> AtResult<'_, SIZE> {
-        if self.echo {
-            Ok(Bytes::from_str("ECHO: ON"))
-        } else {
-            Ok(Bytes::from_str("ECHO: OFF"))
-        }
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; if self.echo { "ON" } else { "OFF" }))
     }
 
-    /// Query: return current echo value
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        if self.echo {
-            Ok(Bytes::from_str("1"))
-        } else {
-            Ok(Bytes::from_str("0"))
-        }
+    /// Query: return current echo value (0 or 1)
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; if self.echo { 1u8 } else { 0u8 }))
     }
 
     /// Test: show valid values
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "(0,1)"))
     }
 
     /// Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-        let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+        let value = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
         match value.as_ref() {
             "0" => {
                 self.echo = false;
-                Ok(Bytes::from_str("ECHO OFF"))
+                Ok(at_response!(SIZE, at_response; "OK"))
             }
             "1" => {
                 self.echo = true;
-                Ok(Bytes::from_str("ECHO ON"))
+                Ok(at_response!(SIZE, at_response; "OK"))
             }
-            _ => Err(AtError::InvalidArgs),
+            _ => Err((at_response, AtError::InvalidArgs)),
         }
     }
 }
@@ -86,13 +78,13 @@ pub struct ResetModule;
 
 impl AtContext<SIZE> for ResetModule {
     /// Execute: perform reset
-    fn exec(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("OK - System reset"))
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "OK"))
     }
 
     /// Test: show command description
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("Reset the system"))
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "Reset the system"))
     }
 }
 
@@ -102,14 +94,14 @@ pub struct InfoModule {
 }
 
 impl AtContext<SIZE> for InfoModule {
-    /// Execute: return system info
-    fn exec(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str(self.version))
+    /// Execute: return version string
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; self.version))
     }
 
     /// Query: return detailed info
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("AT-Parser-RS v1.0.0 - AT Command Parser Library"))
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "AT-Parser-RS - AT Command Parser Library"))
     }
 }
 
@@ -121,75 +113,44 @@ pub struct LedModule {
 
 impl AtContext<SIZE> for LedModule {
     /// Execute: return current LED state
-    fn exec(&mut self) -> AtResult<'_, SIZE> {
-        if self.state {
-            Ok(Bytes::from_str("LED: ON"))
-        } else {
-            Ok(Bytes::from_str("LED: OFF"))
-        }
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; if self.state { "ON" } else { "OFF" }))
     }
 
     /// Query: return state and brightness
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        if self.state {
-            Ok(Bytes::from_str("1,100"))
-        } else {
-            Ok(Bytes::from_str("0,0"))
-        }
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; self.state as u8, self.brightness))
     }
 
     /// Test: show usage
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("AT+LED=<state>,<brightness> where state: 0|1, brightness: 0-100"))
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "<state: 0|1>,<brightness: 0-100>"))
     }
 
     /// Set: change LED state and brightness
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-        let state_str = args.get(0).ok_or(AtError::InvalidArgs)?;
-        
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+        let state_str = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
+
         self.state = match state_str.as_ref() {
             "0" => false,
             "1" => true,
-            _ => return Err(AtError::InvalidArgs),
+            _ => return Err((at_response, AtError::InvalidArgs)),
         };
 
         // Optional brightness parameter
         if let Some(brightness_str) = args.get(1) {
-            self.brightness = brightness_str
+            let bri = brightness_str
                 .parse::<u8>()
-                .map_err(|_| AtError::InvalidArgs)?;
-            
-            if self.brightness > 100 {
-                return Err(AtError::InvalidArgs);
+                .map_err(|_| (at_response, AtError::InvalidArgs))?;
+
+            if bri > 100 {
+                return Err((at_response, AtError::InvalidArgs));
             }
+            self.brightness = bri;
         }
 
-        if self.state {
-            Ok(Bytes::from_str("LED ON"))
-        } else {
-            Ok(Bytes::from_str("LED OFF"))
-        }
+        Ok(at_response!(SIZE, at_response; "OK"))
     }
-}
-
-/// Helper function to execute a command and ignore the result
-fn execute_command(cmd: &str, name: &str, module: &mut dyn AtContext<SIZE>) {
-    let result = if let Some(rest) = cmd.strip_prefix(name) {
-        if rest.is_empty() {
-            module.exec()
-        } else if rest == "?" {
-            module.query()
-        } else if rest == "=?" {
-            module.test()
-        } else if let Some(args_str) = rest.strip_prefix('=') {
-            module.set(Args { raw: args_str })
-        } else {
-            Err(AtError::InvalidArgs)
-        }
-    } else {
-        Err(AtError::UnknownCommand)
-    };
-    let _ = result;
 }
 
 #[unsafe(no_mangle)]
@@ -199,31 +160,42 @@ pub extern "C" fn main() -> ! {
     let mut info = InfoModule { version: "v1.0.0" };
     let mut led = LedModule { state: false, brightness: 0 };
 
+    let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
+
+    let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+        ("AT+ECHO", "+ECHO: ", &mut echo),
+        ("AT+RST",  "+RST: ",  &mut reset),
+        ("AT+INFO", "+INFO: ", &mut info),
+        ("AT+LED",  "+LED: ",  &mut led),
+    ];
+    parser.set_commands(commands);
+
     // INFO
-    execute_command("AT+INFO",   "AT+INFO", &mut info);
-    execute_command("AT+INFO?",  "AT+INFO", &mut info);
+    let _ = parser.execute("AT+INFO");   // Ok(("+INFO: ", "v1.0.0"))
+    let _ = parser.execute("AT+INFO?");  // Ok(("+INFO: ", "AT-Parser-RS ..."))
 
     // ECHO
-    execute_command("AT+ECHO",   "AT+ECHO", &mut echo);
-    execute_command("AT+ECHO=?", "AT+ECHO", &mut echo);
-    execute_command("AT+ECHO=1", "AT+ECHO", &mut echo);
-    execute_command("AT+ECHO?",  "AT+ECHO", &mut echo);
-    execute_command("AT+ECHO=0", "AT+ECHO", &mut echo);
+    let _ = parser.execute("AT+ECHO");   // Ok(("+ECHO: ", "OFF"))
+    let _ = parser.execute("AT+ECHO=?"); // Ok(("+ECHO: ", "(0,1)"))
+    let _ = parser.execute("AT+ECHO=1"); // Ok(("+ECHO: ", "OK"))
+    let _ = parser.execute("AT+ECHO?");  // Ok(("+ECHO: ", "1"))
+    let _ = parser.execute("AT+ECHO=0"); // Ok(("+ECHO: ", "OK"))
 
     // LED
-    execute_command("AT+LED=?",   "AT+LED", &mut led);
-    execute_command("AT+LED=1",   "AT+LED", &mut led);
-    execute_command("AT+LED?",    "AT+LED", &mut led);
-    execute_command("AT+LED=1,75","AT+LED", &mut led);
-    execute_command("AT+LED=0",   "AT+LED", &mut led);
+    let _ = parser.execute("AT+LED=?");    // Ok(("+LED: ", "<state: 0|1>,<brightness: 0-100>"))
+    let _ = parser.execute("AT+LED=1");    // Ok(("+LED: ", "OK"))
+    let _ = parser.execute("AT+LED?");     // Ok(("+LED: ", "1,0"))
+    let _ = parser.execute("AT+LED=1,75"); // Ok(("+LED: ", "OK"))
+    let _ = parser.execute("AT+LED=0");    // Ok(("+LED: ", "OK"))
 
     // RESET
-    execute_command("AT+RST=?", "AT+RST", &mut reset);
-    execute_command("AT+RST",   "AT+RST", &mut reset);
+    let _ = parser.execute("AT+RST=?"); // Ok(("+RST: ", "Reset the system"))
+    let _ = parser.execute("AT+RST");   // Ok(("+RST: ", "OK"))
 
     // Error cases
-    execute_command("AT+ECHO=2", "AT+ECHO", &mut echo);  // -> Err(InvalidArgs)
-    execute_command("AT+INFO=1", "AT+INFO", &mut info);  // -> Err(NotSupported)
+    let _ = parser.execute("AT+ECHO=2");   // Err(("+ECHO: ", InvalidArgs))
+    let _ = parser.execute("AT+UNKNOWN");  // Err(("", UnknownCommand))
 
     loop {}
 }
+

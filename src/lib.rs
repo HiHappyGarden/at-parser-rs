@@ -44,8 +44,7 @@
 //! ```rust,no_run
 //! use at_parser_rs::context::AtContext;
 //! use at_parser_rs::parser::AtParser;
-//! use at_parser_rs::{Args, AtResult, AtError};
-//! use osal_rs::utils::Bytes;
+//! use at_parser_rs::{Args, AtResult, AtError, at_response};
 //!
 //! const SIZE: usize = 64;
 //!
@@ -53,40 +52,41 @@
 //! struct EchoModule { echo: bool }
 //!
 //! impl AtContext<SIZE> for EchoModule {
-//!     fn query(&mut self) -> AtResult<SIZE> {
-//!         if self.echo { Ok(Bytes::from_str("1")) } else { Ok(Bytes::from_str("0")) }
+//!     fn query(&mut self, at_response: &'static str) -> AtResult<SIZE> {
+//!         Ok(at_response!(SIZE, at_response; if self.echo { 1u8 } else { 0u8 }))
 //!     }
-//!     
-//!     fn set(&mut self, args: Args) -> AtResult<SIZE> {
-//!         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+//!
+//!     fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<SIZE> {
+//!         let value = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
 //!         match value.as_ref() {
-//!             "0" => { self.echo = false; Ok(Bytes::from_str("OK")) }
-//!             "1" => { self.echo = true; Ok(Bytes::from_str("OK")) }
-//!             _ => Err(AtError::InvalidArgs),
+//!             "0" => { self.echo = false; Ok(at_response!(SIZE, at_response; "OK")) }
+//!             "1" => { self.echo = true;  Ok(at_response!(SIZE, at_response; "OK")) }
+//!             _ => Err((at_response, AtError::InvalidArgs)),
 //!         }
 //!     }
 //! }
 //!
 //! // 2. Create parser and register commands
+//! //    Each entry is (at_command, at_response_prefix, handler)
 //! let mut echo = EchoModule { echo: false };
 //! let mut parser: AtParser<EchoModule, SIZE> = AtParser::new();
 //!
-//! let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-//!     ("AT+ECHO", &mut echo),
+//! let commands: &mut [(&str, &str, &mut EchoModule)] = &mut [
+//!     ("AT+ECHO", "+ECHO: ", &mut echo),
 //! ];
 //! parser.set_commands(commands);
 //!
 //! // 3. Execute commands
-//! parser.execute("AT+ECHO=1");  // Set echo on
-//! parser.execute("AT+ECHO?");   // Query current state
+//! parser.execute("AT+ECHO=1");  // Set echo on  → Ok(("+ECHO: ", "OK"))
+//! parser.execute("AT+ECHO?");   // Query state  → Ok(("+ECHO: ", "1"))
 //! ```
 //!
 //! # Features
 //!
-//! - **`freertos`** (default) - Enable FreeRTOS support via osal-rs
-//! - **`posix`** - Enable POSIX support via osal-rs
-//! - **`std`** - Enable standard library support via osal-rs
-//! - **`disable_panic`** - Pass-through feature to osal-rs for panic handling
+//! - **`freertos`** (default) — Enable FreeRTOS support via osal-rs
+//! - **`posix`** — Enable POSIX (Linux/macOS) threading support via osal-rs
+//! - **`std`** — Enable standard library support via osal-rs
+//! - **`disable_panic`** — Pass-through feature to osal-rs; disables the built-in panic handler
 //!
 //! # Thread Safety
 //!
@@ -125,8 +125,14 @@ pub enum AtError<'a> {
     UnhandledOwned(String)
 }
 
-/// Result type for AT command operations
-/// Returns either a `(&'static str, Bytes<SIZE>)` response buffer or an `(&'static str, AtError<'a>)` error message.
+/// Result type for AT command operations.
+///
+/// Both the success and the error variant carry the AT response prefix string
+/// (`&'static str`) that was registered alongside the command, so callers can always
+/// reconstruct the full response line.
+///
+/// - `Ok((prefix, bytes))` — successful response with the AT prefix and payload
+/// - `Err((prefix, error))` — failure with the AT prefix and error kind
 pub type AtResult<'a, const SIZE: usize> = Result<(&'static str, Bytes<SIZE>), (&'static str, AtError<'a>)>;
 
 /// Structure holding the arguments passed to an AT command
@@ -381,39 +387,39 @@ macro_rules! at_quoted {
 /// let resp = at_response!(SIZE, "+WIFI: "; at_quoted!(ssid), -70i8);
 /// // buffer: +WIFI: "MyNetwork",-70
 /// ```
-// #[macro_export]
-// macro_rules! at_response {
-//     ($size:expr, $at_resp:expr; $a1:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{}", $at_resp, $a1));
-//         response
-//     }};
-//     ($size:expr, $at_resp:expr; $a1:expr, $a2:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{},{}", $at_resp, $a1, $a2));
-//         response
-//     }};
-//     ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{},{},{}", $at_resp, $a1, $a2, $a3));
-//         response
-//     }};
-//     ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4));
-//         response
-//     }};
-//     ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{},{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4, $a5));
-//         response
-//     }};
-//     ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr, $a6:expr) => {{
-//         let mut response = osal_rs::utils::Bytes::<{$size}>::new();
-//         response.format(format_args!("{}{},{},{},{},{},{}", $at_resp, $a1, $a2, $a3, $a4, $a5, $a6));
-//         response
-//     }};
-// }
+#[macro_export]
+macro_rules! at_response {
+    ($size:expr, $at_resp:expr; $a1:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{}", $a1));
+        ($at_resp, response)
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{},{}", $a1, $a2));
+        ($at_resp, response)
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{},{},{}", $a1, $a2, $a3));
+        ($at_resp, response)
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{},{},{},{}", $a1, $a2, $a3, $a4));
+        ($at_resp, response)
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{},{},{},{},{}", $a1, $a2, $a3, $a4, $a5));
+        ($at_resp, response)
+    }};
+    ($size:expr, $at_resp:expr; $a1:expr, $a2:expr, $a3:expr, $a4:expr, $a5:expr, $a6:expr) => {{
+        let mut response = osal_rs::utils::Bytes::<{$size}>::new();
+        response.format(format_args!("{},{},{},{},{},{}", $a1, $a2, $a3, $a4, $a5, $a6));
+        ($at_resp, response)
+    }};
+}
 
 
 
@@ -428,15 +434,16 @@ macro_rules! at_quoted {
 /// ```rust,ignore
 /// at_modules! {
 ///     SIZE;
-///     "AT+CMD1" => HANDLER1,
-///     "AT+CMD2" => HANDLER2,
+///     ("AT+CMD1", "+CMD1: ") => HANDLER1,
+///     ("AT+CMD2", "+CMD2: ") => HANDLER2,
 /// }
 /// ```
 ///
 /// - `SIZE` — `const usize` that defines the response buffer capacity (must match the
 ///   capacity used by [`AtParser`](crate::parser::AtParser) and every [`AtContext`](crate::context::AtContext) impl).
-/// - `"AT+CMDn"` — the AT command string the parser will match against.
-/// - `HANDLERn` — a `static mut` variable that implements [`AtContext<SIZE>`](crate::context::AtContext).
+/// - `"AT+CMD"` — the AT command string the parser will match against the input.
+/// - `"+CMD: "` — the AT response prefix forwarded to every handler method.
+/// - `HANDLER` — a `static mut` variable that implements [`AtContext<SIZE>`](crate::context::AtContext).
 ///
 /// # Safety
 ///
@@ -459,29 +466,30 @@ macro_rules! at_quoted {
 /// ```rust,no_run
 /// use at_parser_rs::at_modules;
 /// use at_parser_rs::context::AtContext;
-/// use at_parser_rs::{Args, AtResult, AtError};
-/// use osal_rs::utils::Bytes;
+/// use at_parser_rs::{Args, AtResult, AtError, at_response};
 ///
 /// const SIZE: usize = 64;
 ///
 /// struct EchoModule { echo: bool }
 /// impl AtContext<SIZE> for EchoModule {
-///     fn query(&mut self) -> AtResult<SIZE> {
-///         Ok(Bytes::from_str(if self.echo { "1" } else { "0" }))
+///     fn query(&mut self, at_response: &'static str) -> AtResult<SIZE> {
+///         Ok(at_response!(SIZE, at_response; if self.echo { 1u8 } else { 0u8 }))
 ///     }
-///     fn set(&mut self, args: Args) -> AtResult<SIZE> {
-///         let value = args.get(0).ok_or(AtError::InvalidArgs)?;
+///     fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<SIZE> {
+///         let value = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
 ///         match value.as_ref() {
-///             "0" => { self.echo = false; Ok(Bytes::from_str("OK")) }
-///             "1" => { self.echo = true;  Ok(Bytes::from_str("OK")) }
-///             _ => Err(AtError::InvalidArgs),
+///             "0" => { self.echo = false; Ok(at_response!(SIZE, at_response; "OK")) }
+///             "1" => { self.echo = true;  Ok(at_response!(SIZE, at_response; "OK")) }
+///             _ => Err((at_response, AtError::InvalidArgs)),
 ///         }
 ///     }
 /// }
 ///
 /// struct ResetModule;
 /// impl AtContext<SIZE> for ResetModule {
-///     fn exec(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("OK")) }
+///     fn exec(&mut self, at_response: &'static str) -> AtResult<SIZE> {
+///         Ok(at_response!(SIZE, at_response; "OK"))
+///     }
 /// }
 ///
 /// static mut ECHO:  EchoModule  = EchoModule { echo: false };
@@ -489,8 +497,8 @@ macro_rules! at_quoted {
 ///
 /// at_modules! {
 ///     SIZE;
-///     "AT+ECHO" => ECHO,
-///     "AT+RST"  => RESET,
+///     ("AT+ECHO", "+ECHO: ") => ECHO,
+///     ("AT+RST",  "+RST: ")  => RESET,
 /// }
 ///
 /// // COMMANDS is now available in scope:
@@ -502,21 +510,22 @@ macro_rules! at_quoted {
 /// ```rust,no_run
 /// use at_parser_rs::at_modules;
 /// use at_parser_rs::context::AtContext;
-/// use at_parser_rs::{AtResult};
-/// use osal_rs::utils::Bytes;
+/// use at_parser_rs::{AtResult, at_response};
 ///
 /// const SIZE: usize = 32;
 ///
 /// struct PingModule;
 /// impl AtContext<SIZE> for PingModule {
-///     fn exec(&mut self) -> AtResult<SIZE> { Ok(Bytes::from_str("PONG")) }
+///     fn exec(&mut self, at_response: &'static str) -> AtResult<SIZE> {
+///         Ok(at_response!(SIZE, at_response; "PONG"))
+///     }
 /// }
 ///
 /// static mut PING: PingModule = PingModule;
 ///
 /// at_modules! {
 ///     SIZE;
-///     "AT+PING" => PING,
+///     ("AT+PING", "+PING: ") => PING,
 /// }
 /// ```
 ///
@@ -531,12 +540,12 @@ macro_rules! at_quoted {
 ///
 /// const SIZE: usize = 64;
 ///
-/// let mut echo  = EchoModule  { echo: false };
+/// let mut echo  = EchoModule { echo: false };
 /// let mut reset = ResetModule;
 ///
-/// let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-///     ("AT+ECHO", &mut echo),
-///     ("AT+RST",  &mut reset),
+/// let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+///     ("AT+ECHO", "+ECHO: ", &mut echo),
+///     ("AT+RST",  "+RST: ",  &mut reset),
 /// ];
 /// parser.set_commands(commands);
 /// ```
@@ -544,12 +553,12 @@ macro_rules! at_quoted {
 macro_rules! at_modules {
     (
         $size:expr;
-        $( $name:expr => $module:ident ),* $(,)?
+        $( ($name:expr, $at_resp:expr) => $module:ident ),* $(,)?
     ) => {
-        static COMMANDS: &[(&'static str, &mut dyn AtContext<$size>)] = unsafe {
-            &[
+        static COMMANDS: &mut [(&'static str, &'static str, &mut dyn AtContext<$size>)] = unsafe {
+            &mut [
                 $(
-                    ($name, &mut $module),
+                    ($name, $at_resp, &mut $module),
                 )*
             ]
         };

@@ -20,12 +20,9 @@
 
 //! Example: AT command table with UART and device configuration handling
 //!
-//! **Note**: This is a pattern demonstration example showing how to implement
-//! configuration commands in no_std/embedded environments. It illustrates
-//! the `AtContext` trait implementation for device-specific commands.
-//!
-//! In a real embedded application, replace the dummy UART implementation
-//! with your platform's actual hardware abstraction layer (HAL).
+//! Demonstrates `AtContext` implementations for device-specific commands
+//! in a no_std/embedded environment, using the `at_response!` macro and
+//! the 3-tuple command registration `(at_command, at_response, handler)`.
 
 #![allow(dead_code)]
 #![no_std]
@@ -33,100 +30,123 @@
 
 extern crate at_parser_rs;
 
-use at_parser_rs::{Args, AtError, AtResult};
-use osal_rs::utils::Bytes;
 use at_parser_rs::context::AtContext;
+use at_parser_rs::parser::AtParser;
+use at_parser_rs::{Args, AtError, AtResult, at_response};
 
 const SIZE: usize = 64;
 
-// UART struct with AtContext implementation for UARTSEND command
-struct DummyUart {
+/// UART send command — forwards data to the hardware peripheral
+struct UartSendModule {
+    baudrate: u32,
+}
+
+impl UartSendModule {
+    const fn new() -> Self {
+        Self { baudrate: 9600 }
+    }
+
+    fn write(&self, _data: &str) {
+        // In real embedded code: write to the UART peripheral here
+    }
+}
+
+impl AtContext<SIZE> for UartSendModule {
+    /// Query: return current baud-rate
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; self.baudrate))
+    }
+
+    /// Test: show accepted syntax
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "\"<data>\""))
+    }
+
+    /// Set: send the given data string over UART
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+        let data = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
+        self.write(data.as_ref());
+        Ok(at_response!(SIZE, at_response; "SENT"))
+    }
+}
+
+/// Device configuration command — get/set baudrate and mode
+struct ConfigModule {
     baudrate: u32,
     mode: u8,
 }
 
-impl DummyUart {
+impl ConfigModule {
     const fn new() -> Self {
-        Self { baudrate: 9600, mode: 0 }
-    }
-    
-    fn write(&self, data: &str) {
-        // In real embedded, this would send data over UART
-        let _ = data;
+        Self { baudrate: 115200, mode: 0 }
     }
 }
 
-impl AtContext<SIZE> for DummyUart {
-    fn exec(&self) -> AtResult<'_, SIZE> {
-        // Not supported for UARTSEND
-        Err(AtError::NotSupported)
+impl AtContext<SIZE> for ConfigModule {
+    /// Query: return current configuration as `<baudrate>,<mode>`
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; self.baudrate, self.mode))
     }
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-        if let Some(data) = args.get(0) {
-            self.write(data.as_ref());
-            Ok(Bytes::from_str("SENT"))
-        } else {
-            Err(AtError::InvalidArgs)
+
+    /// Test: return supported configuration ranges
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "<baudrate: 9600-115200>,<mode: 0|1>"))
+    }
+
+    /// Set: apply new baudrate and mode
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+        let baudrate = args.get(0)
+            .ok_or((at_response, AtError::InvalidArgs))?
+            .parse::<u32>()
+            .map_err(|_| (at_response, AtError::InvalidArgs))?;
+
+        let mode = args.get(1)
+            .ok_or((at_response, AtError::InvalidArgs))?
+            .parse::<u8>()
+            .map_err(|_| (at_response, AtError::InvalidArgs))?;
+
+        if mode > 1 {
+            return Err((at_response, AtError::InvalidArgs));
         }
+
+        self.baudrate = baudrate;
+        self.mode = mode;
+        // configure_uart(baudrate, mode);  // apply to hardware here
+
+        Ok(at_response!(SIZE, at_response; "OK"))
     }
 }
 
-// Device configuration context
-struct ConfigContext;
-
-impl AtContext<SIZE> for ConfigContext {
-    fn exec(&self) -> AtResult<'_, SIZE> {
-        // Not supported for SETCFG
-        Err(AtError::NotSupported)
-    }
-    
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        // Return current configuration as a static string
-        // In real implementation, format the values dynamically
-        Ok(Bytes::from_str("115200,1"))
-    }
-    
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        // Return supported configuration options
-        Ok(Bytes::from_str("+SETCFG: (baudrate),(mode)"))
-    }
-    
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-        let baud = args.get(0).and_then(|s| s.parse::<u32>().ok());
-        let mode = args.get(1).and_then(|s| s.parse::<u8>().ok());
-        match (baud, mode) {
-            (Some(b), Some(m)) => unsafe {
-                // Configure UART
-                UART.baudrate = b;
-                UART.mode = m;
-                Ok(Bytes::from_str("CONFIGURED"))
-            },
-            _ => Err(AtError::InvalidArgs),
-        }
-    }
-}
-
-static mut UART: DummyUart = DummyUart { baudrate: 9600, mode: 0 };
-static mut CONFIG_CTX: ConfigContext = ConfigContext;
-
-// Example using AtParser
-fn example_with_parser() -> Result<&'static str, AtError<'static>> {
-    // Simplified example for no_std
-    // In real embedded code, you would properly initialize the parser
-    Ok("OK")
-}
-
-// Example using the COMMANDS table generated by at_modules macro
-fn example_with_commands_macro() -> Result<&'static str, AtError<'static>> {
-    // Simple command parsing without the full parser
-    // In a real embedded system, you would use the parser properly
-    Ok("OK")
-}
-
-// Mock main for compilation (in real embedded code, this would be in your firmware)
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
-    // Example usage - in embedded this would be called from your main loop
-    let _result = example_with_commands_macro();
+    let mut uart   = UartSendModule::new();
+    let mut config = ConfigModule::new();
+
+    let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
+    let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+        ("AT+UARTSEND", "+UARTSEND: ", &mut uart),
+        ("AT+CFG",      "+CFG: ",      &mut config),
+    ];
+    parser.set_commands(commands);
+
+    // Test: show syntax
+    let _ = parser.execute("AT+UARTSEND=?"); // Ok(("+UARTSEND: ", "\"<data>\""))
+    let _ = parser.execute("AT+CFG=?");      // Ok(("+CFG: ", "<baudrate: 9600-115200>,<mode: 0|1>"))
+
+    // Query current config
+    let _ = parser.execute("AT+CFG?");       // Ok(("+CFG: ", "115200,0"))
+
+    // Send data over UART
+    let _ = parser.execute("AT+UARTSEND=\"hello\""); // Ok(("+UARTSEND: ", "SENT"))
+
+    // Set new configuration
+    let _ = parser.execute("AT+CFG=9600,1"); // Ok(("+CFG: ", "OK"))
+    let _ = parser.execute("AT+CFG?");       // Ok(("+CFG: ", "9600,1"))
+
+    // Error cases
+    let _ = parser.execute("AT+CFG=9600,5"); // Err(("+CFG: ", InvalidArgs))  — mode > 1
+    let _ = parser.execute("AT+CFG=abc,0");  // Err(("+CFG: ", InvalidArgs))  — bad baudrate
+
     loop {}
 }
+

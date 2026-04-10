@@ -26,20 +26,25 @@ AT-Parser-RS provides a flexible framework for implementing AT command interface
 
 The library supports the following optional features:
 
-- **`osal_rs`** - Enables integration with FreeRTOS through the [osal-rs](https://crates.io/crates/osal-rs) library for RTOS-based applications. Provides synchronization primitives like `Mutex` for thread-safe command handling.
-- **`enable_panic`** - Enables a custom panic handler for `no_std` environments, providing a minimal panic implementation for embedded targets.
+- **`freertos`** (default) — Enable FreeRTOS support via [osal-rs](https://crates.io/crates/osal-rs).
+- **`posix`** — Enable POSIX (Linux/macOS) threading support via osal-rs.
+- **`std`** — Enable standard library support via osal-rs.
+- **`disable_panic`** — Pass-through feature to osal-rs; disables the built-in panic handler.
 
-By default, no features are enabled, providing pure `no_std` compatibility without external dependencies.
+By default the `freertos` feature is enabled.
 
 ```bash
-# Build with FreeRTOS support
-cargo build --features="osal_rs"
+# Build with FreeRTOS support (default)
+cargo build
 
-# Build with custom panic handler
-cargo build --features="enable_panic"
+# Build with POSIX support
+cargo build --no-default-features --features="posix"
 
-# Build with both features
-cargo build --features="osal_rs,enable_panic"
+# Build with std support
+cargo build --no-default-features --features="std"
+
+# Disable the default panic handler
+cargo build --features="disable_panic"
 ```
 
 ## Command Forms
@@ -63,19 +68,26 @@ The main trait for implementing command handlers. The const generic `SIZE` defin
 
 ```rust
 pub trait AtContext<const SIZE: usize> {
-    fn exec(&self) -> AtResult<'_, SIZE>;
-    fn query(&mut self) -> AtResult<'_, SIZE>;
-    fn test(&mut self) -> AtResult<'_, SIZE>;
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE>;
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE>;
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE>;
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE>;
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE>;
 }
 ```
 
-All methods return `Err(AtError::NotSupported)` by default.
+The `at_response` parameter is the AT response prefix string (e.g. `"+ECHO: "`) that was
+registered alongside the command. Pass it through to `Ok(...)` / `Err(...)` so the caller
+can format the full response line. Use the [`at_response!`](#at_response-macro) macro for
+convenient formatting.
+
+All methods return `Err((at_response, AtError::NotSupported))` by default.
 
 ### `AtResult<'a, SIZE>` and `AtError<'a>`
 
 ```rust
-pub type AtResult<'a, const SIZE: usize> = Result<Bytes<SIZE>, AtError<'a>>;
+// Both Ok and Err carry the AT response prefix together with the payload
+pub type AtResult<'a, const SIZE: usize> =
+    Result<(&'static str, Bytes<SIZE>), (&'static str, AtError<'a>)>;
 
 pub enum AtError<'a> {
     UnknownCommand,        // Command not found
@@ -86,7 +98,12 @@ pub enum AtError<'a> {
 }
 ```
 
-Use `Unhandled` when you have a static or borrowed string literal, and `UnhandledOwned` when you need to construct an error message dynamically at runtime.
+The first element of the tuple is always the AT response prefix (`at_response`) received from
+the parser, so callers can reconstruct the full response line regardless of whether the
+call succeeded or failed.
+
+Use `Unhandled` when you have a static string literal, and `UnhandledOwned` when you need
+to construct an error message dynamically at runtime.
 
 ### `Bytes<SIZE>`
 
@@ -109,6 +126,11 @@ where
     T: AtContext<SIZE> + ?Sized;
 ```
 
+Commands are registered as **3-tuples**: `(at_command, at_response, handler)` where
+`at_command` is the string the parser matches against (e.g. `"AT+ECHO"`) and
+`at_response` is the prefix forwarded to the handler (e.g. `"+ECHO: "`). These can be the
+same string or different—choose whatever your protocol requires.
+
 ### `Args` Structure
 
 Provides access to comma-separated arguments:
@@ -119,7 +141,10 @@ pub struct Args<'a> {
 }
 
 impl<'a> Args<'a> {
-    pub fn get(&self, index: usize) -> Option<&'a str>;
+    /// Returns the n-th argument, unquoting and decoding escape sequences.
+    pub fn get(&self, index: usize) -> Option<Cow<'a, str>>;
+    /// Returns the n-th argument as-is (no escape decoding).
+    pub fn get_raw(&self, index: usize) -> Option<&'a str>;
 }
 ```
 
@@ -127,11 +152,14 @@ impl<'a> Args<'a> {
 
 ### 1. Define Command Modules
 
-Implement the `AtContext<SIZE>` trait for your command handlers. Choose a buffer size that fits your largest response string:
+Implement the `AtContext<SIZE>` trait for your command handlers. Choose a buffer size that fits your largest response string.
+
+Every method receives the `at_response` prefix that was registered for this command so you
+can include it in the response (use the `at_response!` macro for convenience):
 
 ```rust
 use at_parser_rs::context::AtContext;
-use at_parser_rs::{AtResult, AtError, Args};
+use at_parser_rs::{AtResult, AtError, Args, at_response};
 use osal_rs::utils::Bytes;
 
 const SIZE: usize = 64;
@@ -143,38 +171,29 @@ pub struct EchoModule {
 
 impl AtContext<SIZE> for EchoModule {
     // Execute: return current echo state
-    fn exec(&self) -> AtResult<'_, SIZE> {
-        if self.echo {
-            Ok(Bytes::from_str("ECHO: ON"))
-        } else {
-            Ok(Bytes::from_str("ECHO: OFF"))
-        }
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        let state: u8 = if self.echo { 1 } else { 0 };
+        Ok(at_response!(SIZE, at_response; state))
     }
 
     // Query: return current echo value
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        if self.echo { Ok(Bytes::from_str("1")) } else { Ok(Bytes::from_str("0")) }
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; if self.echo { 1u8 } else { 0u8 }))
     }
 
     // Set: enable/disable echo
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-        let v = args.get(0).ok_or(AtError::InvalidArgs)?;
-        match v {
-            "0" => {
-                self.echo = false;
-                Ok(Bytes::from_str("ECHO OFF"))
-            }
-            "1" => {
-                self.echo = true;
-                Ok(Bytes::from_str("ECHO ON"))
-            }
-            _ => Err(AtError::InvalidArgs),
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+        let v = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
+        match v.as_ref() {
+            "0" => { self.echo = false; Ok(at_response!(SIZE, at_response; "OK")) }
+            "1" => { self.echo = true;  Ok(at_response!(SIZE, at_response; "OK")) }
+            _ => Err((at_response, AtError::InvalidArgs)),
         }
     }
 
     // Test: show valid values and usage
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("Valid values: 0 (OFF), 1 (ON)"))
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "(0,1)"))
     }
 }
 
@@ -182,14 +201,13 @@ impl AtContext<SIZE> for EchoModule {
 pub struct ResetModule;
 
 impl AtContext<SIZE> for ResetModule {
-    fn exec(&self) -> AtResult<'_, SIZE> {
-        // Trigger hardware reset
-        // reset_system();
-        Ok(Bytes::from_str("OK - System reset"))
+    fn exec(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        // Trigger hardware reset here if needed
+        Ok(at_response!(SIZE, at_response; "OK"))
     }
 
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("Reset the system"))
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "Reset the system"))
     }
 }
 ```
@@ -214,6 +232,8 @@ static mut RESET: ResetModule = ResetModule;
 
 ### 3. Initialize Parser and Register Commands
 
+Commands are registered as 3-tuples: `(at_command, at_response_prefix, handler)`.
+
 ```rust
 use at_parser_rs::parser::AtParser;
 use at_parser_rs::context::AtContext;
@@ -222,9 +242,9 @@ const SIZE: usize = 64;
 
 let mut parser: AtParser<dyn AtContext<SIZE>, SIZE> = AtParser::new();
 
-let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-    ("AT+ECHO", &mut echo),
-    ("AT+RST", &mut reset),
+let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+    ("AT+ECHO", "+ECHO: ", &mut echo),
+    ("AT+RST",  "+RST: ",  &mut reset),
 ];
 
 parser.set_commands(commands);
@@ -232,52 +252,49 @@ parser.set_commands(commands);
 
 ### 4. Execute Commands
 
+`execute` returns `Ok((prefix, bytes))` on success or `Err((prefix, error))` on failure,
+where `prefix` is the AT response prefix registered for that command.
+
 ```rust
-// Execute: show current state
+// Execute: return current state
 match parser.execute("AT+ECHO") {
-    Ok(response) => println!("Response: {}", response),  // "ECHO: OFF"
-    Err(e) => println!("Error: {:?}", e),
+    Ok((prefix, response)) => println!("{}{}", prefix, response),  // "+ECHO: 0"
+    Err((prefix, e)) => println!("{} ERROR: {:?}", prefix, e),
 }
 
 // Test: show valid values
 match parser.execute("AT+ECHO=?") {
-    Ok(response) => println!("Valid: {}", response),     // "Valid values: 0 (OFF), 1 (ON)"
-    Err(e) => println!("Error: {:?}", e),
+    Ok((prefix, response)) => println!("{}{}", prefix, response),  // "+ECHO: (0,1)"
+    Err((prefix, e)) => println!("{} ERROR: {:?}", prefix, e),
 }
 
 // Set: enable echo
 match parser.execute("AT+ECHO=1") {
-    Ok(response) => println!("Response: {}", response),  // "ECHO ON"
-    Err(e) => println!("Error: {:?}", e),
+    Ok((prefix, response)) => println!("{}{}", prefix, response),  // "+ECHO: OK"
+    Err((prefix, e)) => println!("{} ERROR: {:?}", prefix, e),
 }
 
 // Query: get current value
 match parser.execute("AT+ECHO?") {
-    Ok(response) => println!("Echo: {}", response),      // "1"
-    Err(e) => println!("Error: {:?}", e),
+    Ok((prefix, response)) => println!("{}{}", prefix, response),  // "+ECHO: 1"
+    Err((prefix, e)) => println!("{} ERROR: {:?}", prefix, e),
 }
 
-// Execute reset
-match parser.execute("AT+RST") {
-    Ok(response) => println!("Response: {}", response),  // "OK - System reset"
-    Err(e) => println!("Error: {:?}", e),
-}
-
-// Unknown command
+// Unknown command → Err(("" , AtError::UnknownCommand))
 match parser.execute("AT+UNKNOWN") {
     Ok(_) => {},
-    Err(AtError::UnknownCommand) => println!("Command not found"),
+    Err((_, AtError::UnknownCommand)) => println!("Command not found"),
     Err(_) => {}
 }
 ```
 
-`Bytes<SIZE>` implements `Display`, so it can be printed directly with `{}` or converted to a string via `.to_string()`.
+`Bytes<SIZE>` implements `Display`, so it can be printed directly with `{}` or converted
+to a string via `.to_string()`.
 
 ## Advanced Example: UART Module
 
 ```rust
-use at_parser_rs::{AtResult, AtError, Args};
-use osal_rs::utils::Bytes;
+use at_parser_rs::{AtResult, AtError, Args, at_response};
 use at_parser_rs::context::AtContext;
 
 const SIZE: usize = 64;
@@ -289,47 +306,46 @@ pub struct UartModule {
 
 impl AtContext<SIZE> for UartModule {
     // Query: return current configuration
-    fn query(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("115200,8"))
+    fn query(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; self.baudrate, self.data_bits))
     }
 
     // Set: configure UART
-    fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
+    fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
         let baudrate = args.get(0)
-            .ok_or(AtError::InvalidArgs)?
+            .ok_or((at_response, AtError::InvalidArgs))?
             .parse::<u32>()
-            .map_err(|_| AtError::InvalidArgs)?;
-        
-        let data_bits = args.get(1)
-            .ok_or(AtError::InvalidArgs)?
-            .parse::<u8>()
-            .map_err(|_| AtError::InvalidArgs)?;
+            .map_err(|_| (at_response, AtError::InvalidArgs))?;
 
-        if ![7, 8].contains(&data_bits) {
-            return Err(AtError::InvalidArgs);
+        let data_bits = args.get(1)
+            .ok_or((at_response, AtError::InvalidArgs))?
+            .parse::<u8>()
+            .map_err(|_| (at_response, AtError::InvalidArgs))?;
+
+        if ![7u8, 8].contains(&data_bits) {
+            return Err((at_response, AtError::InvalidArgs));
         }
 
         self.baudrate = baudrate;
         self.data_bits = data_bits;
-        
-        // Apply configuration to hardware
         // configure_uart(baudrate, data_bits);
-        
-        Ok(Bytes::from_str("OK"))
+
+        Ok(at_response!(SIZE, at_response; "OK"))
     }
 
-    // Test: show valid configurations and usage
-    fn test(&mut self) -> AtResult<'_, SIZE> {
-        Ok(Bytes::from_str("AT+UART=<baudrate>,<data_bits> where baudrate: 9600-115200, data_bits: 7|8"))
+    // Test: show valid configurations
+    fn test(&mut self, at_response: &'static str) -> AtResult<'_, SIZE> {
+        Ok(at_response!(SIZE, at_response; "<baudrate: 9600-115200>,<data_bits: 7|8>"))
     }
 }
 ```
 
 Usage:
 ```rust
-parser.execute("AT+UART=?");        // "AT+UART=<baudrate>,<data_bits> where..."
-parser.execute("AT+UART=115200,8"); // "OK"
-parser.execute("AT+UART?");         // "115200,8"
+// Register: ("AT+UART", "+UART: ", &mut uart)
+parser.execute("AT+UART=?");        // Ok(("+UART: ", "<baudrate: 9600-115200>,<data_bits: 7|8>"))
+parser.execute("AT+UART=115200,8"); // Ok(("+UART: ", "OK"))
+parser.execute("AT+UART?");         // Ok(("+UART: ", "115200,8"))
 ```
 
 ## Parsing Arguments
@@ -339,13 +355,13 @@ Quoted values are treated as a single argument, so commas inside `"..."` do not 
 When a quoted argument contains `\"`, `Args::get()` returns the decoded `"` character:
 
 ```rust
-fn set(&mut self, args: Args) -> AtResult<'_, SIZE> {
-    let arg0 = args.get(0).ok_or(AtError::InvalidArgs)?;
-    let arg1 = args.get(1).ok_or(AtError::InvalidArgs)?;
+fn set(&mut self, at_response: &'static str, args: Args) -> AtResult<'_, SIZE> {
+    let arg0 = args.get(0).ok_or((at_response, AtError::InvalidArgs))?;
+    let arg1 = args.get(1).ok_or((at_response, AtError::InvalidArgs))?;
     let arg2 = args.get(2); // Optional argument
-    
+
     // Process arguments...
-    Ok(Bytes::from_str("OK"))
+    Ok(at_response!(SIZE, at_response; "OK"))
 }
 ```
 
@@ -364,16 +380,17 @@ For a command like `AT+SESS=i,"ciao, sono \"antonio\"",mysecretpassword`:
 For numeric arguments:
 ```rust
 let value = args.get(0)
-    .ok_or(AtError::InvalidArgs)?
+    .ok_or((at_response, AtError::InvalidArgs))?
     .parse::<i32>()
-    .map_err(|_| AtError::InvalidArgs)?;
+    .map_err(|_| (at_response, AtError::InvalidArgs))?;
 ```
 
-Use `Args::get_raw()` only when you explicitly need the original escaped content from a quoted argument:
+Use `Args::get_raw()` only when you explicitly need the original escaped content from a
+quoted argument:
 
 ```rust
 let name = args.get(1)
-    .ok_or(AtError::InvalidArgs)?;
+    .ok_or((at_response, AtError::InvalidArgs))?;
 
 assert_eq!(name.as_ref(), "ciao, sono \"antonio\"");
 ```
@@ -394,9 +411,44 @@ use osal_rs::sync::Mutex;
 static MODULE: Mutex<RefCell<MyModule>> = Mutex::new(RefCell::new(MyModule::new()));
 ```
 
+## `at_response!` Macro
+
+Constructs an `Ok((&'static str, Bytes<SIZE>))` value from a response prefix and 1–6
+comma-separated arguments:
+
+```rust
+use at_parser_rs::at_response;
+
+const SIZE: usize = 64;
+
+// Single value
+let r = at_response!(SIZE, "+ECHO: "; 1u8);              // ("+ECHO: ", "1")
+
+// Two values
+let r = at_response!(SIZE, "+LED: "; 1u8, 75u8);         // ("+LED: ", "1,75")
+
+// Three values
+let r = at_response!(SIZE, "+NET: "; "192.168.1.1", 8080u16, 1u8);
+```
+
+## `at_quoted!` Macro
+
+Wraps a value in double-quote characters, useful inside `at_response!` when the
+protocol requires quoted strings:
+
+```rust
+use at_parser_rs::{at_response, at_quoted};
+
+const SIZE: usize = 64;
+let ssid = "MyNetwork";
+let r = at_response!(SIZE, "+WIFI: "; at_quoted!(ssid), -70i8);
+// ("+WIFI: ", "\"MyNetwork\",-70")
+```
+
 ## Using the `at_modules!` Macro
 
-The library provides an `at_modules!` macro for defining static command arrays. The first argument is the `SIZE` const:
+The library provides an `at_modules!` macro for defining static command arrays.
+Each entry is a 3-tuple: `(at_command, at_response) => HANDLER`.
 
 ```rust
 use at_parser_rs::at_modules;
@@ -404,14 +456,15 @@ use at_parser_rs::context::AtContext;
 
 const SIZE: usize = 64;
 
-static mut ECHO: EchoModule = EchoModule { echo: false };
+static mut ECHO:  EchoModule  = EchoModule { echo: false };
 static mut RESET: ResetModule = ResetModule;
 
 at_modules! {
     SIZE;
-    "AT+ECHO" => ECHO,
-    "AT+RST" => RESET,
+    ("AT+ECHO", "+ECHO: ") => ECHO,
+    ("AT+RST",  "+RST: ")  => RESET,
 }
+// COMMANDS is now available: parser.set_commands(COMMANDS);
 ```
 
 ### Limitations and Considerations
@@ -424,7 +477,7 @@ at_modules! {
 
 ### Recommended Alternative
 
-For most applications, the manual approach shown in the examples is preferred:
+For most applications, the manual slice approach is preferred:
 
 ```rust
 use at_parser_rs::context::AtContext;
@@ -432,12 +485,12 @@ use at_parser_rs::parser::AtParser;
 
 const SIZE: usize = 64;
 
-let mut echo = EchoModule { echo: false };
+let mut echo  = EchoModule { echo: false };
 let mut reset = ResetModule;
 
-let commands: &mut [(&str, &mut dyn AtContext<SIZE>)] = &mut [
-    ("AT+ECHO", &mut echo),
-    ("AT+RST", &mut reset),
+let commands: &mut [(&str, &str, &mut dyn AtContext<SIZE>)] = &mut [
+    ("AT+ECHO", "+ECHO: ", &mut echo),
+    ("AT+RST",  "+RST: ",  &mut reset),
 ];
 
 parser.set_commands(commands);

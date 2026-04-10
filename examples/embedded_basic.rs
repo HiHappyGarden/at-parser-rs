@@ -20,12 +20,8 @@
  
 //! Basic usage example demonstrating no_std compatible code
 //!
-//! **Note**: This is a pattern demonstration example showing how the library
-//! can be used in no_std/embedded contexts. It illustrates API usage patterns
-//! and error handling approaches suitable for embedded systems.
-//!
-//! In a real embedded application, you would integrate these patterns into
-//! your firmware's main loop or RTOS tasks.
+//! Shows Args parsing and error handling patterns with the updated AtResult
+//! tuple type `Result<(&'static str, Bytes<SIZE>), (&'static str, AtError)>`.
 
 #![allow(dead_code)]
 #![no_std]
@@ -33,35 +29,33 @@
 
 extern crate at_parser_rs;
 
-use at_parser_rs::{Args, AtError, AtResult};
-use osal_rs::utils::Bytes;
+use at_parser_rs::{Args, AtError, AtResult, at_response};
 
 const SIZE: usize = 64;
+const AT_RESP: &str = "+DEMO: ";
 
-// Example function using Args in no_std
+// Parse the second argument and echo it back in the response
 fn parse_args_example() -> AtResult<'static, SIZE> {
     let args = Args { raw: "foo,bar,baz" };
     match args.get(1) {
-        Some(val) => Ok(Bytes::from_str(val.as_ref())),
-        None => Err(AtError::InvalidArgs),
+        Some(val) => Ok(at_response!(SIZE, AT_RESP; val.as_ref())),
+        None => Err((AT_RESP, AtError::InvalidArgs)),
     }
 }
 
-// Example of error handling
+// Demonstrate matching on the new tuple error
 fn handle_error_example() -> &'static str {
     match parse_args_example() {
-        Ok(_) => "OK",
-        Err(AtError::InvalidArgs) => "Argomento non valido",
+        Ok((_, _)) => "OK",
+        Err((_, AtError::InvalidArgs)) => "Argomento non valido",
+        Err((_, AtError::UnknownCommand)) => "Comando sconosciuto",
         Err(_) => "Errore generico",
     }
 }
 
-// In an embedded environment, these functions can be called from main or from a task.
-
-// Mock main for compilation (in real embedded code, this would be in your firmware)
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
-    // Example usage - in embedded this would be called from your main loop
     let _result = handle_error_example();
     loop {}
 }
+
